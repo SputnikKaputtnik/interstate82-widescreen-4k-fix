@@ -1,0 +1,14 @@
+# Build outputs
+*.dll
+*.exe
+*.obj
+*.o
+
+# Local diagnostics and crash dumps
+*.log
+*.dmp
+
+# Game-specific files and archives
+*.bin
+*.zfs
+*.zix
