@@ -1,8 +1,16 @@
-# Interstate '82 Windows 11 Compatibility Shim
+# Interstate '82 on Windows 11 — GOG Compatibility Shim
 
-Small, source-available compatibility shim for the **GOG release of Interstate '82** on current Windows systems. It was tested on Windows 11 with an NVIDIA RTX 4070 Ti.
+A source-available **Interstate 82 / Interstate '82 Windows 11 fix** for the GOG release. It combines a small DirectInput compatibility shim with a tested [DDrawCompat](https://github.com/narzoul/DDrawCompat) profile, allowing the game to start without DxWnd or a visible helper launcher. Tested on Windows 11 with an NVIDIA RTX 4070 Ti.
 
-It removes the need for DxWnd's visible launcher in this tested setup. It does **not** contain any game files, nor a copy of DDrawCompat.
+It does **not** contain game files or a copy of DDrawCompat.
+
+## At a glance
+
+- **Game:** Interstate '82 (also searched as *Interstate 82* or *I82*), GOG release
+- **Platform:** Windows 10 / Windows 11, 64-bit
+- **Graphics:** DirectDraw and Direct3D 1-7 through DDrawCompat
+- **Input:** restores normal in-game keyboard binding when control names are empty or localized
+- **Launcher:** starts normally; no DxWnd GUI required
 
 ## What it fixes
 
