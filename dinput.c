@@ -43,6 +43,13 @@ static HANDLE arena_heap(void){
     return *(HANDLE*)(obj+ARENA_HEAP_OFF);
 }
 
+/* A pointer is only safe to pass to the real heap APIs when its block header
+ * is still mapped. HeapValidate alone does not catch a decommitted page:
+ * RtlSizeHeap reads [m-1] (header at m-8) and faults before it can report. */
+static int block_alive(HANDLE h,LPCVOID m){
+    return m && readable((const BYTE*)m-8,8) && HeapValidate(h,0,m);
+}
+
 /* ---- real function pointers ------------------------------------------- */
 typedef SIZE_T (WINAPI *HeapSize_t)(HANDLE,DWORD,LPCVOID);
 typedef LPVOID (WINAPI *HeapReAlloc_t)(HANDLE,DWORD,LPVOID,SIZE_T);
@@ -61,6 +68,8 @@ static CRITICAL_SECTION g_cs;
 /* ---- hooks: heap ------------------------------------------------------- */
 static LPVOID WINAPI Hooked_HeapReAlloc(HANDLE h,DWORD f,LPVOID old,SIZE_T sz){
     if(!old) return g_realHeapReAlloc(h,f,old,sz);
+    if(!block_alive(h,old))                      /* old block gone: start fresh */
+        return HeapAlloc(h,f&HEAP_ZERO_MEMORY,sz);
     LPVOID r=g_realHeapReAlloc(h,f|HEAP_REALLOC_IN_PLACE_ONLY,old,sz);
     if(r) return r;
     if(f & HEAP_REALLOC_IN_PLACE_ONLY) return NULL;
@@ -84,11 +93,12 @@ static LPVOID WINAPI Hooked_HeapReAlloc(HANDLE h,DWORD f,LPVOID old,SIZE_T sz){
 static BOOL WINAPI Hooked_HeapFree(HANDLE h,DWORD f,LPVOID m){
     HANDLE ah=arena_heap();
     if(ah && h==ah && m) return TRUE;            /* arena free -> quarantine */
+    if(m && !block_alive(h,m)) return TRUE;      /* already unmapped: nothing to free */
     return g_realHeapFree(h,f,m);
 }
 
 static SIZE_T WINAPI Hooked_HeapSize(HANDLE h,DWORD f,LPCVOID m){
-    if(m && !HeapValidate(h,0,m)){
+    if(m && !block_alive(h,m)){
         LPVOID nw=NULL;
         EnterCriticalSection(&g_cs);
         LONG newest=g_ridx;
@@ -97,7 +107,7 @@ static SIZE_T WINAPI Hooked_HeapSize(HANDLE h,DWORD f,LPCVOID m){
             if(e->h==h && e->oldp==(LPVOID)m){ nw=e->newp; break; }
         }
         LeaveCriticalSection(&g_cs);
-        if(nw && HeapValidate(h,0,nw)) return g_realHeapSize(h,0,nw);
+        if(nw && block_alive(h,nw)) return g_realHeapSize(h,0,nw);
         return 0;
     }
     return g_realHeapSize(h,f,m);
@@ -233,18 +243,24 @@ static DWORD WINAPI InstallThread(LPVOID p){ (void)p;
     g_realHeapSize   =(HeapSize_t)   GetProcAddress(k,"HeapSize");
     g_realHeapReAlloc=(HeapReAlloc_t)GetProcAddress(k,"HeapReAlloc");
     g_realHeapFree   =(HeapFree_t)   GetProcAddress(k,"HeapFree");
-    for(int i=0;i<40000;i++){
-        HMODULE s=GetModuleHandleA("i82sim.dll");
-        if(s){
+    /* I82 loads i82sim.dll when a mission starts and unloads it again when the
+     * mission ends, so every mission brings a pristine import table. Watch for
+     * the lifetime of the process instead of stopping after the first hit:
+     * IATHookByAddr only matches the untouched API address, which makes a
+     * repeat pass over an already-hooked table a no-op. */
+    for(;;){
+        HMODULE s=NULL;
+        if(GetModuleHandleExA(0,"i82sim.dll",&s) && s){   /* ref+1: no unload mid-walk */
             g_i82Base=(BYTE*)s;
             IATHookByAddr(s,(void*)g_realHeapSize,   (void*)Hooked_HeapSize);
             IATHookByAddr(s,(void*)g_realHeapReAlloc,(void*)Hooked_HeapReAlloc);
             IATHookByAddr(s,(void*)g_realHeapFree,   (void*)Hooked_HeapFree);
-            return 0;
+            FreeLibrary(s);
+        } else {
+            g_i82Base=NULL;
         }
-        Sleep(15);
+        Sleep(25);
     }
-    return 0;
 }
 
 #ifndef GET_MODULE_HANDLE_EX_FLAG_PIN
