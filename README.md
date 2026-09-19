@@ -72,6 +72,32 @@ The resulting `dinput.dll` must stay beside `dinput_orig.dll`. The export defini
 - The only file written is `dinput_msgbox.log`, and only when such a popup is suppressed. There is no telemetry, no registry access and no background diagnostics.
 - Remove `dinput.dll`, `dinput_orig.dll`, `ddraw.dll`, and `DDrawCompat-i82stubz.ini` to revert this method. Restore any files from your backup if they existed before installation.
 
+## Optional: longer draw distance
+
+`patch_viewdistance.py` is a separate, optional tool. It has nothing to do with the shim and is not needed to play — it edits the game's own level data to draw the world further out.
+
+Interstate '82 stores a `World_Data` block per level as plain text inside `i82.zfs`, and `i82perf.ini`'s `Far_Clipping_Plane = 2` is already the highest setting the game offers. The real values are there:
+
+```
+Fog_Max:        200.00
+Clipping_Plane: 200
+```
+
+The two are equal on purpose: the fog is what hides the edge where the world stops being drawn. Raising the clipping plane alone would only move the pop-in into a fog bank, so the tool scales both, with separate factors. Because `Fog_Alpha` is 128 the fog never becomes fully opaque, so geometry past `Fog_Max` still reads as a silhouette — pushing the clipping plane further than the fog adds depth instead of drawing something invisible. Hence the defaults: **clipping 3x, fog 2x**.
+
+On the machine this was developed against it cost nothing measurable — 107 fps at 3840x2160, against 100 before. The engine is not limited by geometry here; the short view distance was a decision for 1999 hardware.
+
+```sh
+python patch_viewdistance.py                      # show what would change
+python patch_viewdistance.py --apply              # clipping 3x, fog 2x
+python patch_viewdistance.py --clip 4 --fog 2.5 --apply
+python patch_viewdistance.py --restore            # undo
+```
+
+It edits your installed `i82.zfs`. Before the first change it keeps an untouched copy as `i82.zfs.original` beside it and always computes from that copy, so different factors never compound and `--restore` always works. Values live in fixed-width fields, so each is rewritten to the same byte length: every offset in the archive stays valid and nothing is repacked. Add `--game` if your installation is not in the default GOG location. Start a mission to see the difference — the menu shows nothing of it.
+
+The tool ships no game data and redistributes nothing; it changes files you already own.
+
 ## Troubleshooting
 
 **"Where is shell dll?" followed by "Shell Error!" on startup, and the game quits.**
