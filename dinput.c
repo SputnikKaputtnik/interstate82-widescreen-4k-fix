@@ -29,25 +29,19 @@ static int readable(const void* p,SIZE_T n){
     return 1;
 }
 
-/* ---- module/arena identification -------------------------------------- */
-#define ARENA_RVA      0x38B298u    /* "Project File" arena object          */
-#define ARENA_NAME     "Project File"
-#define ARENA_HEAP_OFF 0x20
+/* ---- module identification -------------------------------------------- */
 static BYTE* g_i82Base=NULL;
 
-static HANDLE arena_heap(void){
-    if(!g_i82Base) return NULL;
-    BYTE* obj=g_i82Base+ARENA_RVA;
-    if(!readable(obj,0x30)) return NULL;
-    if(memcmp(obj,ARENA_NAME,sizeof(ARENA_NAME)-1)!=0) return NULL;
-    return *(HANDLE*)(obj+ARENA_HEAP_OFF);
-}
-
-/* A pointer is only safe to pass to the real heap APIs when its block header
- * is still mapped. HeapValidate alone does not catch a decommitted page:
- * RtlSizeHeap reads [m-1] (header at m-8) and faults before it can report. */
+/* The crash this guards against is RtlSizeHeap reading [m-1] on a page the
+ * heap has decommitted, so a mapping check on the block header at m-8 is
+ * exactly the test that is needed. HeapValidate is deliberately not used: it
+ * takes the heap lock on every call, and with CpuAffinity=1 pinning every
+ * game thread to one core that contention was enough to hang the process. A
+ * block that is freed but still mapped returns a wrong size rather than
+ * faulting, which the caller survives. */
 static int block_alive(HANDLE h,LPCVOID m){
-    return m && readable((const BYTE*)m-8,8) && HeapValidate(h,0,m);
+    (void)h;
+    return m && readable((const BYTE*)m-8,8);
 }
 
 /* ---- real function pointers ------------------------------------------- */
@@ -68,33 +62,18 @@ static CRITICAL_SECTION g_cs;
 /* ---- hooks: heap ------------------------------------------------------- */
 static LPVOID WINAPI Hooked_HeapReAlloc(HANDLE h,DWORD f,LPVOID old,SIZE_T sz){
     if(!old) return g_realHeapReAlloc(h,f,old,sz);
-    if(!block_alive(h,old))                      /* old block gone: start fresh */
-        return HeapAlloc(h,f&HEAP_ZERO_MEMORY,sz);
-    LPVOID r=g_realHeapReAlloc(h,f|HEAP_REALLOC_IN_PLACE_ONLY,old,sz);
-    if(r) return r;
-    if(f & HEAP_REALLOC_IN_PLACE_ONLY) return NULL;
-    SIZE_T oldsz=g_realHeapSize(h,0,old);
-    LPVOID nw=HeapAlloc(h,f&HEAP_ZERO_MEMORY,sz);
-    if(!nw){
-        nw=g_realHeapReAlloc(h,f,old,sz);
-        if(nw && nw!=old){
-            EnterCriticalSection(&g_cs);
-            MoveEnt* e=&g_ring[(unsigned)(g_ridx++)%RING];
-            e->h=h; e->oldp=old; e->newp=nw;
-            LeaveCriticalSection(&g_cs);
-        }
-        return nw;
+    LPVOID nw=g_realHeapReAlloc(h,f,old,sz);     /* let the heap move it freely */
+    if(nw && nw!=old){                           /* remember it for HeapSize */
+        EnterCriticalSection(&g_cs);
+        MoveEnt* e=&g_ring[(unsigned)(g_ridx++)%RING];
+        e->h=h; e->oldp=old; e->newp=nw;
+        LeaveCriticalSection(&g_cs);
     }
-    if(oldsz!=(SIZE_T)-1 && oldsz>0)
-        memcpy(nw,old,oldsz<sz?oldsz:sz);
     return nw;
 }
 
 static BOOL WINAPI Hooked_HeapFree(HANDLE h,DWORD f,LPVOID m){
-    HANDLE ah=arena_heap();
-    if(ah && h==ah && m) return TRUE;            /* arena free -> quarantine */
-    if(m && !block_alive(h,m)) return TRUE;      /* already unmapped: nothing to free */
-    return g_realHeapFree(h,f,m);
+    return g_realHeapFree(h,f,m);                /* untouched; guard belongs in HeapSize */
 }
 
 static SIZE_T WINAPI Hooked_HeapSize(HANDLE h,DWORD f,LPCVOID m){
@@ -238,28 +217,73 @@ static int IATHookByAddr(HMODULE mod,void* target,void* repl){
     return c;
 }
 
+/* Applying the heap hooks is idempotent: IATHookByAddr only matches the
+ * untouched API address, so a second pass over an already-patched table
+ * changes nothing. That lets both the loader hook and the backstop poll call
+ * this freely. */
+static void install_heap_hooks(void){
+    HMODULE s=NULL;
+    if(!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           "i82sim.dll",&s) || !s){ g_i82Base=NULL; return; }
+    g_i82Base=(BYTE*)s;
+    IATHookByAddr(s,(void*)g_realHeapSize,   (void*)Hooked_HeapSize);
+    IATHookByAddr(s,(void*)g_realHeapReAlloc,(void*)Hooked_HeapReAlloc);
+    IATHookByAddr(s,(void*)g_realHeapFree,   (void*)Hooked_HeapFree);
+}
+
+typedef HMODULE (WINAPI *LLA_t)(LPCSTR);
+typedef HMODULE (WINAPI *LLW_t)(LPCWSTR);
+typedef HMODULE (WINAPI *LLExA_t)(LPCSTR,HANDLE,DWORD);
+typedef HMODULE (WINAPI *LLExW_t)(LPCWSTR,HANDLE,DWORD);
+static LLA_t   g_realLLA=NULL;
+static LLW_t   g_realLLW=NULL;
+static LLExA_t g_realLLExA=NULL;
+static LLExW_t g_realLLExW=NULL;
+
+static HMODULE WINAPI Hooked_LLA(LPCSTR f){
+    HMODULE m=g_realLLA(f);   if(m) install_heap_hooks(); return m;
+}
+static HMODULE WINAPI Hooked_LLW(LPCWSTR f){
+    HMODULE m=g_realLLW(f);   if(m) install_heap_hooks(); return m;
+}
+static HMODULE WINAPI Hooked_LLExA(LPCSTR f,HANDLE h,DWORD fl){
+    HMODULE m=g_realLLExA(f,h,fl); if(m) install_heap_hooks(); return m;
+}
+static HMODULE WINAPI Hooked_LLExW(LPCWSTR f,HANDLE h,DWORD fl){
+    HMODULE m=g_realLLExW(f,h,fl); if(m) install_heap_hooks(); return m;
+}
+
+/* i82stubz.exe is what pulls in i82sim.dll, so its import table is where the
+ * loader calls must be caught. */
+static void hook_loader(void){
+    HMODULE exe=GetModuleHandleA(NULL);
+    HMODULE k=GetModuleHandleA("kernel32.dll");
+    if(!exe || !k) return;
+    g_realLLA  =(LLA_t)  GetProcAddress(k,"LoadLibraryA");
+    g_realLLW  =(LLW_t)  GetProcAddress(k,"LoadLibraryW");
+    g_realLLExA=(LLExA_t)GetProcAddress(k,"LoadLibraryExA");
+    g_realLLExW=(LLExW_t)GetProcAddress(k,"LoadLibraryExW");
+    if(g_realLLA)   IATHookByAddr(exe,(void*)g_realLLA,  (void*)Hooked_LLA);
+    if(g_realLLW)   IATHookByAddr(exe,(void*)g_realLLW,  (void*)Hooked_LLW);
+    if(g_realLLExA) IATHookByAddr(exe,(void*)g_realLLExA,(void*)Hooked_LLExA);
+    if(g_realLLExW) IATHookByAddr(exe,(void*)g_realLLExW,(void*)Hooked_LLExW);
+}
+
 static DWORD WINAPI InstallThread(LPVOID p){ (void)p;
     HMODULE k=GetModuleHandleA("kernel32.dll");
     g_realHeapSize   =(HeapSize_t)   GetProcAddress(k,"HeapSize");
     g_realHeapReAlloc=(HeapReAlloc_t)GetProcAddress(k,"HeapReAlloc");
     g_realHeapFree   =(HeapFree_t)   GetProcAddress(k,"HeapFree");
-    /* I82 loads i82sim.dll when a mission starts and unloads it again when the
-     * mission ends, so every mission brings a pristine import table. Watch for
-     * the lifetime of the process instead of stopping after the first hit:
-     * IATHookByAddr only matches the untouched API address, which makes a
-     * repeat pass over an already-hooked table a no-op. */
-    for(;;){
-        HMODULE s=NULL;
-        if(GetModuleHandleExA(0,"i82sim.dll",&s) && s){   /* ref+1: no unload mid-walk */
-            g_i82Base=(BYTE*)s;
-            IATHookByAddr(s,(void*)g_realHeapSize,   (void*)Hooked_HeapSize);
-            IATHookByAddr(s,(void*)g_realHeapReAlloc,(void*)Hooked_HeapReAlloc);
-            IATHookByAddr(s,(void*)g_realHeapFree,   (void*)Hooked_HeapFree);
-            FreeLibrary(s);
-        } else {
-            g_i82Base=NULL;
-        }
-        Sleep(25);
+    /* I82 loads i82sim.dll when a mission starts and unloads it when the
+     * mission ends, so every mission brings a pristine import table, and the
+     * game begins filling its arena immediately after the load returns. Any
+     * polling interval is therefore a window in which an unguarded dead
+     * pointer can reach the real HeapSize -- which is exactly how a 200 ms
+     * poll reintroduced the mission-start crash. Catch the load itself. */
+    hook_loader();
+    for(;;){                       /* backstop only */
+        install_heap_hooks();
+        Sleep(50);
     }
 }
 
