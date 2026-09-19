@@ -1,8 +1,14 @@
-# Interstate '82 Windows 11 Compatibility Shim
+# Interstate '82 — Widescreen (1920x1080) and Windows 11 Fix
 
-Small, source-available compatibility shim for the **GOG release of Interstate '82** on current Windows systems. It was tested on Windows 11 with an NVIDIA RTX 4070 Ti.
+Small, source-available compatibility shim that makes the **GOG release of Interstate '82** run on Windows 10 and 11 — and adds the **widescreen resolution the game never shipped with**.
 
-It removes the need for DxWnd's visible launcher in this tested setup. It does **not** contain any game files, nor a copy of DDrawCompat.
+Interstate '82 was built for 4:3 and 5:4 monitors: it offers exactly four resolutions (640x480, 800x600, 1024x768, 1280x1024) and rejects everything else, so no config file or wrapper can give you 16:9. This shim widens that filter, and **1920x1080 appears in the game's own video options**. The engine handles the wider frame properly: the view extends sideways (Hor+) instead of stretching or cropping, and the HUD moves to the screen edges.
+
+It also fixes the crashes and input problems that stop the game on modern Windows, and removes the need for DxWnd's visible launcher. It does **not** contain any game files, nor a copy of DDrawCompat.
+
+Tested on Windows 11 with an NVIDIA RTX 4070 Ti.
+
+**Keywords:** Interstate 82 widescreen patch, Interstate '82 1080p, 16:9 fix, Windows 11 crash fix, GOG, DDrawCompat, resolution patch.
 
 ## What it fixes
 
