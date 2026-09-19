@@ -217,11 +217,50 @@ static int IATHookByAddr(HMODULE mod,void* target,void* repl){
     return c;
 }
 
+/* ---- input-system popup suppression ------------------------------------
+ * I82 reports binding problems through MessageBox, using the C++ method name
+ * as the caption. They are developer diagnostics with no player-actionable
+ * content; one appears between the menu and the load screen on every mission
+ * start and has to be dismissed by hand. Answer them with IDOK and keep the
+ * text in a log instead. */
+static void mlog(const char* t){
+    HANDLE h=CreateFileA("dinput_msgbox.log",FILE_APPEND_DATA,
+        FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
+    if(h!=INVALID_HANDLE_VALUE){DWORD w;WriteFile(h,t,(DWORD)lstrlenA(t),&w,NULL);CloseHandle(h);}
+}
+
+typedef int (WINAPI *MessageBoxA_t)(HWND,LPCSTR,LPCSTR,UINT);
+static MessageBoxA_t g_realMessageBoxA=NULL;
+
+static int WINAPI Hooked_MessageBoxA(HWND wnd,LPCSTR text,LPCSTR caption,UINT type){
+    if(caption && readable(caption,6) && !memcmp(caption,"CInput",6)){
+        char b[512],*p=b;
+        const char* t="[swallowed] ";
+        while(*t) *p++=*t++;
+        for(const char* c=caption; *c && p<b+200; ) *p++=*c++;
+        *p++=':'; *p++=' ';
+        if(text && readable(text,1))
+            for(const char* c=text; *c && p<b+480; c++) *p++=(*c=='\n'||*c=='\r')?' ':*c;
+        *p++='\n'; *p=0;
+        mlog(b);
+        return IDOK;
+    }
+    return g_realMessageBoxA(wnd,text,caption,type);
+}
+
+static void hook_messagebox(const char* mod){
+    HMODULE m=NULL;
+    if(!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,mod,&m) || !m) return;
+    if(g_realMessageBoxA) IATHookByAddr(m,(void*)g_realMessageBoxA,(void*)Hooked_MessageBoxA);
+}
+
 /* Applying the heap hooks is idempotent: IATHookByAddr only matches the
  * untouched API address, so a second pass over an already-patched table
  * changes nothing. That lets both the loader hook and the backstop poll call
  * this freely. */
 static void install_heap_hooks(void){
+    hook_messagebox("i82sim.dll");      /* both are no-ops while unloaded */
+    hook_messagebox("I82ShellDll.dll");
     HMODULE s=NULL;
     if(!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                            "i82sim.dll",&s) || !s){ g_i82Base=NULL; return; }
@@ -274,6 +313,9 @@ static DWORD WINAPI InstallThread(LPVOID p){ (void)p;
     g_realHeapSize   =(HeapSize_t)   GetProcAddress(k,"HeapSize");
     g_realHeapReAlloc=(HeapReAlloc_t)GetProcAddress(k,"HeapReAlloc");
     g_realHeapFree   =(HeapFree_t)   GetProcAddress(k,"HeapFree");
+    HMODULE u=GetModuleHandleA("user32.dll");
+    if(!u) u=LoadLibraryA("user32.dll");
+    if(u) g_realMessageBoxA=(MessageBoxA_t)GetProcAddress(u,"MessageBoxA");
     /* I82 loads i82sim.dll when a mission starts and unloads it when the
      * mission ends, so every mission brings a pristine import table, and the
      * game begins filling its arena immediately after the load returns. Any

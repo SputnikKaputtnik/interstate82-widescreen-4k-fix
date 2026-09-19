@@ -9,8 +9,9 @@ It removes the need for DxWnd's visible launcher in this tested setup. It does *
 - DirectDraw/Direct3D 1-7 presentation through [DDrawCompat](https://github.com/narzoul/DDrawCompat), configured for borderless fullscreen.
 - A mission/level-load crash in the tested GOG build by applying a narrowly targeted heap-compatibility workaround to `i82sim.dll`.
 - Empty or localized DirectInput keyboard-object names that prevent normal in-game key binding. The proxy exposes canonical English DirectInput keyboard names only for the keyboard path used by I82.
+- Modal developer diagnostics from the input system (`CInputBinding::bindControl` and its siblings). One appears between the menu and the load screen on every mission start and has to be dismissed by hand, although it reports a condition a player cannot act on. They are answered automatically and written to `dinput_msgbox.log` instead.
 
-The shim is version-specific: it contains an RVA for the tested GOG `i82sim.dll`. Do not use it with a different release, executable, mod, or language build without validating it first.
+The shim no longer hardcodes any address inside `i82sim.dll`, but it has only been developed and validated against the tested GOG release. Do not assume it is correct for a different release, executable, mod, or language build without checking it first.
 
 ## Requirements
 
@@ -50,9 +51,10 @@ The resulting `dinput.dll` must stay beside `dinput_orig.dll`. The export defini
 ## Scope and safety
 
 - The source is a targeted compatibility experiment, not a general DirectInput wrapper.
-- It changes only I82's imported `HeapSize`, `HeapReAlloc`, and `HeapFree` call sites after `i82sim.dll` loads.
+- It redirects three groups of imports: `HeapSize`, `HeapReAlloc` and `HeapFree` in `i82sim.dll`; the `LoadLibrary` family in `i82stubz.exe`, so the heap hooks are in place the moment the module is mapped rather than a poll interval later; and `MessageBoxA` in `i82sim.dll` and `I82ShellDll.dll`.
 - The DirectInput hook affects only the system keyboard object.
-- The release build contains no telemetry, logging, registry changes, popup hooks, or background diagnostics.
+- Only popups whose caption begins with `CInput` are suppressed. Everything else is passed through untouched.
+- The only file written is `dinput_msgbox.log`, and only when such a popup is suppressed. There is no telemetry, no registry access and no background diagnostics.
 - Remove `dinput.dll`, `dinput_orig.dll`, `ddraw.dll`, and `DDrawCompat-i82stubz.ini` to revert this method. Restore any files from your backup if they existed before installation.
 
 ## Credits
