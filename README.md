@@ -1,14 +1,16 @@
-# Interstate '82 — Widescreen (1920x1080) and Windows 11 Fix
+# Interstate '82 — 4K and Widescreen (3840x2160 / 1920x1080) and Windows 11 Fix
 
-Small, source-available compatibility shim that makes the **GOG release of Interstate '82** run on Windows 10 and 11 — and adds the **widescreen resolution the game never shipped with**.
+Small, source-available compatibility shim that makes the **GOG release of Interstate '82** run on Windows 10 and 11 — and adds the **4K and widescreen resolutions the game never shipped with**.
 
-Interstate '82 was built for 4:3 and 5:4 monitors: it offers exactly four resolutions (640x480, 800x600, 1024x768, 1280x1024) and rejects everything else, so no config file or wrapper can give you 16:9. This shim widens that filter, and **1920x1080 appears in the game's own video options**. The engine handles the wider frame properly: the view extends sideways (Hor+) instead of stretching or cropping, and the HUD moves to the screen edges.
+Interstate '82 was built for 4:3 and 5:4 monitors: it offers exactly four resolutions (640x480, 800x600, 1024x768, 1280x1024) and rejects everything else, so no config file or wrapper can give you 16:9. This shim widens that filter, and **1920x1080 and 3840x2160 appear in the game's own video options**. The engine handles the wider frame properly: the view extends sideways (Hor+) instead of stretching or cropping, the HUD moves to the screen edges — and it scales the HUD with the resolution, so 4K stays readable rather than shrinking into a corner.
+
+4K measured around 100 fps on an RTX 4070 Ti where 1080p reached 240, so it costs roughly what the extra pixels are worth and nothing more.
 
 It also fixes the crashes and input problems that stop the game on modern Windows, and removes the need for DxWnd's visible launcher. It does **not** contain any game files, nor a copy of DDrawCompat.
 
 Tested on Windows 11 with an NVIDIA RTX 4070 Ti.
 
-**Keywords:** Interstate 82 widescreen patch, Interstate '82 1080p, 16:9 fix, Windows 11 crash fix, GOG, DDrawCompat, resolution patch.
+**Keywords:** Interstate 82 4K patch, Interstate '82 widescreen patch, Interstate 82 1080p, 2160p, 16:9 fix, Windows 11 crash fix, GOG, DDrawCompat, resolution patch.
 
 ## What it fixes
 
@@ -16,7 +18,9 @@ Tested on Windows 11 with an NVIDIA RTX 4070 Ti.
 - A mission/level-load crash in the tested GOG build by applying a narrowly targeted heap-compatibility workaround to `i82sim.dll`.
 - Empty or localized DirectInput keyboard-object names that prevent normal in-game key binding. The proxy exposes canonical English DirectInput keyboard names only for the keyboard path used by I82.
 - Modal developer diagnostics from the input system (`CInputBinding::bindControl` and its siblings). One appears between the menu and the load screen on every mission start and has to be dismissed by hand, although it reports a condition a player cannot act on. They are answered automatically and written to `dinput_msgbox.log` instead.
-- The absence of any widescreen resolution. I82 accepts only four hardcoded modes (640x480, 800x600, 1024x768, 1280x1024), so no configuration file can produce a 16:9 frame. The shim widens that filter to offer **1920x1080** in place of 1280x1024. The engine itself handles the wider frame correctly: the field of view extends horizontally (Hor+) and the HUD moves to the screen edges.
+- The absence of any widescreen resolution. I82 accepts only four hardcoded modes (640x480, 800x600, 1024x768, 1280x1024), so no configuration file can produce a 16:9 frame. The shim widens that filter to offer **1920x1080** in place of 1280x1024, and **3840x2160** in place of 1024x768. The engine itself handles the wider frame correctly: the field of view extends horizontally (Hor+), the HUD moves to the screen edges, and it scales with the resolution.
+
+  The 4K slot is only taken on a desktop that is at least 3840x2160; below that, 1024x768 is left alone rather than traded for a mode the monitor cannot show. 640x480 and 800x600 are never touched — the game's width dispatch tests ">800" first, so only the two upper slots can hold a widescreen mode.
 
 The shim no longer hardcodes any address inside `i82sim.dll`, but it has only been developed and validated against the tested GOG release. Do not assume it is correct for a different release, executable, mod, or language build without checking it first.
 
@@ -39,7 +43,7 @@ The shim no longer hardcodes any address inside `i82sim.dll`, but it has only be
    - `dinput_orig.dll` → game directory, next to `i82stubz.exe`
    - `DDrawCompat-i82stubz.ini` → game directory, next to `i82stubz.exe`
 
-   The profile's `SupportedResolutions` line is required for widescreen: the game offers 1920x1080 once the shim is in place, but DDrawCompat must accept the mode as well, and its default list holds 4:3 modes only. Select the resolution in the game under Options → Video.
+   The profile's `SupportedResolutions` line is required for widescreen: the game offers 1920x1080 and 3840x2160 once the shim is in place, but DDrawCompat must accept the modes as well, and its default list holds 4:3 modes only. Select the resolution in the game under Options → Video.
 
    `dinput.def` is only needed to build the DLL; it does not need to be copied to the game directory.
 
@@ -60,12 +64,23 @@ The resulting `dinput.dll` must stay beside `dinput_orig.dll`. The export defini
 ## Scope and safety
 
 - The source is a targeted compatibility experiment, not a general DirectInput wrapper.
-- For widescreen it rewrites two immediate operands in the display-mode filter of `i82sim.dll` and `I82ShellDll.dll`, changing the accepted 1280x1024 pair to 1920x1080. The site is located by matching the instruction shape, not a fixed address, and nothing is written unless it matches.
+- For widescreen it rewrites up to four immediate operands in the display-mode filter of `i82sim.dll` and `I82ShellDll.dll`: the accepted 1280x1024 pair becomes 1920x1080, and 1024x768 becomes 3840x2160 on a desktop that can show it. The site is located by matching the instruction shape, not a fixed address; the height compare of the second slot is reached by following the filter's own branch rather than by searching nearby, and nothing is written unless every part matches.
+- Both game modules are packed, so their code is still encrypted for a short while after they appear in the loader's module list. The patch therefore never writes while a `LoadLibrary` call is in progress, and it keeps retrying until a scan actually matches instead of assuming the first attempt saw real code.
 - It redirects three groups of imports: `HeapSize`, `HeapReAlloc` and `HeapFree` in `i82sim.dll`; the `LoadLibrary` family in `i82stubz.exe`, so the heap hooks are in place the moment the module is mapped rather than a poll interval later; and `MessageBoxA` in `i82sim.dll` and `I82ShellDll.dll`.
 - The DirectInput hook affects only the system keyboard object.
 - Only popups whose caption begins with `CInput` are suppressed. Everything else is passed through untouched.
 - The only file written is `dinput_msgbox.log`, and only when such a popup is suppressed. There is no telemetry, no registry access and no background diagnostics.
 - Remove `dinput.dll`, `dinput_orig.dll`, `ddraw.dll`, and `DDrawCompat-i82stubz.ini` to revert this method. Restore any files from your backup if they existed before installation.
+
+## Troubleshooting
+
+**"Where is shell dll?" followed by "Shell Error!" on startup, and the game quits.**
+An overlay is hooking the process as it launches. RivaTuner Statistics Server (RTSS, shipped with MSI Afterburner) does this reliably: with RTSS already running, the game dies before its menu module is ever loaded — first with an access violation in `RTSSHooks.dll` in the Windows application log, later with no crash entry at all, because the game bails out through its own error path first. It happens with any `dinput.dll`, including none, so it is easy to mistake for a problem with this shim.
+
+Either start the game first and RTSS afterwards, which works because injecting into a running process does not disturb it, or give `i82stubz.exe` a profile in RTSS with *Application detection level* set to **None**. Other overlays that inject at process start are worth ruling out the same way. When a startup failure makes no sense, check the Windows application log for a foreign module before suspecting anything else.
+
+**The video options only offer 4:3 modes.**
+`SupportedResolutions` is missing from the DDrawCompat profile, or the profile is not named after the executable (`DDrawCompat-i82stubz.ini`).
 
 ## Credits
 
