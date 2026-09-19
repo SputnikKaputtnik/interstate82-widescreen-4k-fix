@@ -223,28 +223,61 @@ static int IATHookByAddr(HMODULE mod,void* target,void* repl){
  * content; one appears between the menu and the load screen on every mission
  * start and has to be dismissed by hand. Answer them with IDOK and keep the
  * text in a log instead. */
-static void mlog(const char* t){
-    HANDLE h=CreateFileA("dinput_msgbox.log",FILE_APPEND_DATA,
+static void logto(const char* file,const char* t){
+    HANDLE h=CreateFileA(file,FILE_APPEND_DATA,
         FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
     if(h!=INVALID_HANDLE_VALUE){DWORD w;WriteFile(h,t,(DWORD)lstrlenA(t),&w,NULL);CloseHandle(h);}
 }
+static void mlog(const char* t){ logto("dinput_msgbox.log",t); }
+
+/* Build with -DI82_DIAG to trace module loads and where the mode patch lands.
+ * Release builds write no such log. */
+#ifdef I82_DIAG
+static void dnum(char** p,char* end,DWORD v){
+    char n[16]; int i=0;
+    if(!v) n[i++]='0';
+    while(v && i<15){ n[i++]=(char)('0'+(v%10u)); v/=10u; }
+    while(i && *p<end) *(*p)++=n[--i];
+}
+static void dlog(const char* what,const char* name,DWORD a,DWORD b){
+    char s[512],*p=s,*end=s+500;
+    for(const char* c=what; *c && p<end; ) *p++=*c++;
+    *p++=' ';
+    if(name && readable(name,1)) for(const char* c=name; *c && p<end; ) *p++=*c++;
+    else { const char* q="(none)"; while(*q && p<end) *p++=*q++; }
+    *p++=' '; dnum(&p,end,a);
+    *p++=' '; dnum(&p,end,b);
+    *p++='\n'; *p=0;
+    logto("dinput_diag.log",s);
+}
+#endif
 
 typedef int (WINAPI *MessageBoxA_t)(HWND,LPCSTR,LPCSTR,UINT);
 static MessageBoxA_t g_realMessageBoxA=NULL;
 
+static void mlog_box(const char* tag,LPCSTR caption,LPCSTR text){
+    char b[512],*p=b;
+    for(const char* c=tag; *c && p<b+40; ) *p++=*c++;
+    if(caption && readable(caption,1))
+        for(const char* c=caption; *c && p<b+220; c++) *p++=(*c=='\n'||*c=='\r')?' ':*c;
+    *p++=':'; *p++=' ';
+    if(text && readable(text,1))
+        for(const char* c=text; *c && p<b+490; c++) *p++=(*c=='\n'||*c=='\r')?' ':*c;
+    *p++='\n'; *p=0;
+    mlog(b);
+}
+
 static int WINAPI Hooked_MessageBoxA(HWND wnd,LPCSTR text,LPCSTR caption,UINT type){
     if(caption && readable(caption,6) && !memcmp(caption,"CInput",6)){
-        char b[512],*p=b;
-        const char* t="[swallowed] ";
-        while(*t) *p++=*t++;
-        for(const char* c=caption; *c && p<b+200; ) *p++=*c++;
-        *p++=':'; *p++=' ';
-        if(text && readable(text,1))
-            for(const char* c=text; *c && p<b+480; c++) *p++=(*c=='\n'||*c=='\r')?' ':*c;
-        *p++='\n'; *p=0;
-        mlog(b);
+        mlog_box("[swallowed] ",caption,text);
         return IDOK;
     }
+    /* Everything else is meant for the player and is passed through. It still
+     * gets logged, because DDrawCompat's fullscreen window covers it: the box
+     * cannot be read or clicked, and a display error this way has cost a
+     * Windows session more than once. The log is then the only record of what
+     * it said. */
+    mlog_box("[shown] ",caption,text);
     return g_realMessageBoxA(wnd,text,caption,type);
 }
 
@@ -278,6 +311,12 @@ static void hook_messagebox(const char* mod){
 #define MODE_OLD_H 1024u
 #define MODE_NEW_W 1920u
 #define MODE_NEW_H 1080u
+/* The filter has four hardcoded slots and no room for a fifth, and the width
+ * dispatch tests ">800" first, so a second widescreen mode has to take the
+ * other slot in that branch: 1024x768. 640x480 and 800x600 stay untouched. */
+#define MODE2_OLD_H 768u
+#define MODE2_NEW_W 3840u
+#define MODE2_NEW_H 2160u
 #define MODE_H_SEARCH 160          /* how far the height compare may sit away */
 
 static int write_imm(DWORD* at,DWORD value){
@@ -286,6 +325,18 @@ static int write_imm(DWORD* at,DWORD value){
     *at=value;
     VirtualProtect(at,4,old,&old);
     return 1;
+}
+
+/* Trading 1024x768 away is only a gain on a desktop that can actually show the
+ * replacement; below that it would cost a mode the monitor has for one it does
+ * not. ENUM_REGISTRY_SETTINGS reports the desktop mode rather than whatever
+ * the game may already have switched to. */
+static int desktop_at_least(DWORD w,DWORD h){
+    DEVMODEA dm;
+    ZeroMemory(&dm,sizeof dm);
+    dm.dmSize=sizeof dm;
+    if(!EnumDisplaySettingsA(NULL,ENUM_REGISTRY_SETTINGS,&dm)) return 0;
+    return dm.dmPelsWidth>=w && dm.dmPelsHeight>=h;
 }
 
 static int widen_modes_in(BYTE* base){
@@ -298,6 +349,7 @@ static int widen_modes_in(BYTE* base){
     if(size<128) return 0;
 
     int hits=0;
+    int fourk=desktop_at_least(MODE2_NEW_W,MODE2_NEW_H);
     for(SIZE_T i=0;i+96<size;i++){
         if(base[i]!=0x81) continue;                       /* cmp r/m32, imm32 */
         for(int ol=1;ol<=3;ol++){                         /* operand bytes    */
@@ -317,25 +369,74 @@ static int widen_modes_in(BYTE* base){
             }
             if(!himm) continue;
 
-            if(write_imm((DWORD*)(w2+1+ol),MODE_NEW_W) && write_imm(himm,MODE_NEW_H))
-                hits++;
+            /* The je just after the 1024 compare is that slot's own branch and
+             * lands directly on its height compare, in both modules. Following
+             * it is exact; searching a window around the site instead is what
+             * once rewrote the wrong compare and took 1920x1080 down with it.
+             * The target must be a cmp against 768 using the same operand as
+             * the height compare above, or the slot is left alone. */
+            DWORD* w4=NULL; DWORD* h4=NULL;
+            if(fourk){
+                BYTE* t=j+2+(signed char)j[1];
+                if(t>base && t+8<base+size && t[0]==0x81 &&
+                   memcmp(t+1,(BYTE*)himm-ol,ol)==0 &&
+                   *(DWORD*)(t+1+ol)==MODE2_OLD_H){
+                    w4=(DWORD*)(w1+1+ol);
+                    h4=(DWORD*)(t+1+ol);
+                }
+            }
+
+            if(!write_imm((DWORD*)(w2+1+ol),MODE_NEW_W) || !write_imm(himm,MODE_NEW_H))
+                break;
+            hits++;
+            if(w4 && write_imm(w4,MODE2_NEW_W))
+                write_imm(h4,MODE2_NEW_H);
             break;
         }
     }
     return hits;
 }
 
-/* Scanning a 4 MB image on every poll would be wasteful, and once rewritten
- * the pattern no longer matches anyway, so each module base is done once. */
+/* Scanning a multi-megabyte image on every poll would be wasteful, and once
+ * rewritten the pattern no longer matches anyway, so a module is scanned only
+ * until the patch has actually landed.
+ *
+ * Marking it done regardless of the outcome is what made widescreen flaky:
+ * both modules are packed, so their code is still encrypted for a short while
+ * after they appear in the loader's module list. A poll that lands inside that
+ * window scans ciphertext, finds nothing, and -- with the flag set up front --
+ * never looks again, leaving the game with its original four resolutions for
+ * the rest of the session. So: only a scan that found something counts as
+ * done, and a module that never matches is given a bounded number of tries
+ * rather than being rescanned forever. */
+/* Non-zero while a hooked LoadLibrary call is in progress on any thread. */
+static volatile LONG g_inLoad=0;
+
+#define WS_MAX_TRIES 100                  /* ~5 s at the 50 ms poll interval */
 static BYTE* g_wsDone[2]={NULL,NULL};
+static BYTE* g_wsSeen[2]={NULL,NULL};
+static int   g_wsTries[2]={0,0};
 static void widen_module(const char* name,int slot){
     HMODULE m=NULL;
     if(!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,name,&m) || !m){
-        g_wsDone[slot]=NULL; return;                      /* unloaded: re-arm */
+        g_wsDone[slot]=NULL; g_wsSeen[slot]=NULL; g_wsTries[slot]=0;
+        return;                                           /* unloaded: re-arm */
     }
     if(g_wsDone[slot]==(BYTE*)m) return;
-    g_wsDone[slot]=(BYTE*)m;
-    widen_modes_in((BYTE*)m);
+    /* Never write into a module that is still being loaded. It appears in the
+     * loader's list before its entry point has finished, so the packer is
+     * still decrypting the very bytes being patched -- retrying until the
+     * scan succeeds turned that from a harmless miss into a corrupted module,
+     * and the game then failed to start at any resolution. */
+    if(g_inLoad>0) return;
+    if(g_wsSeen[slot]!=(BYTE*)m){ g_wsSeen[slot]=(BYTE*)m; g_wsTries[slot]=0; }
+    int hits=widen_modes_in((BYTE*)m);
+    g_wsTries[slot]++;
+    if(hits>0 || g_wsTries[slot]>=WS_MAX_TRIES) g_wsDone[slot]=(BYTE*)m;
+#ifdef I82_DIAG
+    if(hits>0 || g_wsTries[slot]>=WS_MAX_TRIES || g_wsTries[slot]==1)
+        dlog("widen",name,(DWORD)(DWORD_PTR)m,(DWORD)hits);
+#endif
 }
 static void widen_display_modes(void){
     widen_module("i82sim.dll",0);
@@ -347,6 +448,7 @@ static void widen_display_modes(void){
  * changes nothing. That lets both the loader hook and the backstop poll call
  * this freely. */
 static void install_heap_hooks(void){
+    hook_messagebox(NULL);              /* i82stubz.exe itself */
     hook_messagebox("i82sim.dll");      /* both are no-ops while unloaded */
     hook_messagebox("I82ShellDll.dll");
     widen_display_modes();
@@ -368,17 +470,57 @@ static LLW_t   g_realLLW=NULL;
 static LLExA_t g_realLLExA=NULL;
 static LLExW_t g_realLLExW=NULL;
 
+/* The error the game reports on a failed start is "Where is shell dll?", so
+ * the first thing to establish is whether the load itself returns null and
+ * with what error -- everything else is guesswork until that is known. The
+ * last error is read before the log call, which would clobber it. */
 static HMODULE WINAPI Hooked_LLA(LPCSTR f){
-    HMODULE m=g_realLLA(f);   if(m) install_heap_hooks(); return m;
+    InterlockedIncrement(&g_inLoad);
+    HMODULE m=g_realLLA(f);
+    DWORD e=m?0:GetLastError();
+    InterlockedDecrement(&g_inLoad);
+#ifdef I82_DIAG
+    dlog("LoadLibraryA",f,(DWORD)(DWORD_PTR)m,e);
+#else
+    (void)e;
+#endif
+    if(m) install_heap_hooks(); return m;
 }
 static HMODULE WINAPI Hooked_LLW(LPCWSTR f){
-    HMODULE m=g_realLLW(f);   if(m) install_heap_hooks(); return m;
+    InterlockedIncrement(&g_inLoad);
+    HMODULE m=g_realLLW(f);
+    DWORD e=m?0:GetLastError();
+    InterlockedDecrement(&g_inLoad);
+#ifdef I82_DIAG
+    dlog("LoadLibraryW","(wide)",(DWORD)(DWORD_PTR)m,e);
+#else
+    (void)e;
+#endif
+    if(m) install_heap_hooks(); return m;
 }
 static HMODULE WINAPI Hooked_LLExA(LPCSTR f,HANDLE h,DWORD fl){
-    HMODULE m=g_realLLExA(f,h,fl); if(m) install_heap_hooks(); return m;
+    InterlockedIncrement(&g_inLoad);
+    HMODULE m=g_realLLExA(f,h,fl);
+    DWORD e=m?0:GetLastError();
+    InterlockedDecrement(&g_inLoad);
+#ifdef I82_DIAG
+    dlog("LoadLibraryExA",f,(DWORD)(DWORD_PTR)m,e);
+#else
+    (void)e;
+#endif
+    if(m) install_heap_hooks(); return m;
 }
 static HMODULE WINAPI Hooked_LLExW(LPCWSTR f,HANDLE h,DWORD fl){
-    HMODULE m=g_realLLExW(f,h,fl); if(m) install_heap_hooks(); return m;
+    InterlockedIncrement(&g_inLoad);
+    HMODULE m=g_realLLExW(f,h,fl);
+    DWORD e=m?0:GetLastError();
+    InterlockedDecrement(&g_inLoad);
+#ifdef I82_DIAG
+    dlog("LoadLibraryExW","(wide)",(DWORD)(DWORD_PTR)m,e);
+#else
+    (void)e;
+#endif
+    if(m) install_heap_hooks(); return m;
 }
 
 /* i82stubz.exe is what pulls in i82sim.dll, so its import table is where the
