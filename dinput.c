@@ -254,6 +254,94 @@ static void hook_messagebox(const char* mod){
     if(g_realMessageBoxA) IATHookByAddr(m,(void*)g_realMessageBoxA,(void*)Hooked_MessageBoxA);
 }
 
+/* ---- widescreen: widen the hardcoded display-mode filter ---------------
+ * I82 accepts a display mode only when width and height match one of four
+ * hardcoded pairs, checked instruction by instruction in the EnumDisplayModes
+ * callback. There is no table to edit, which is why no configuration file can
+ * produce a widescreen mode.
+ *
+ * The same engine source is linked into i82sim.dll and I82ShellDll.dll, and
+ * the menu's list comes from the shell -- i82sim is not even loaded while the
+ * video options are open. The two builds hold width and height differently:
+ *
+ *     i82sim       81 7D E8 00 05 00 00   cmp dword ptr [ebp-18h],500h
+ *     I82ShellDll  81 FF    00 05 00 00   cmp edi,500h
+ *
+ * so a fixed signature matches only one. What both share is the shape:
+ * compare width against 1024, jump short, compare width against 1280 through
+ * the identical operand, then compare height against 1024 shortly after.
+ * Matching that shape locates the immediates in either module.
+ *
+ * The width search tests ">800" first, so the replacement has to stay in that
+ * branch: 1280x1024 is taken over, 1024x768 remains as the fallback. */
+#define MODE_OLD_W 1280u
+#define MODE_OLD_H 1024u
+#define MODE_NEW_W 1920u
+#define MODE_NEW_H 1080u
+#define MODE_H_SEARCH 160          /* how far the height compare may sit away */
+
+static int write_imm(DWORD* at,DWORD value){
+    DWORD old;
+    if(!VirtualProtect(at,4,PAGE_EXECUTE_READWRITE,&old)) return 0;
+    *at=value;
+    VirtualProtect(at,4,old,&old);
+    return 1;
+}
+
+static int widen_modes_in(BYTE* base){
+    if(!base) return 0;
+    IMAGE_DOS_HEADER* dos=(IMAGE_DOS_HEADER*)base;
+    if(!readable(base,0x40) || dos->e_magic!=IMAGE_DOS_SIGNATURE) return 0;
+    IMAGE_NT_HEADERS* nt=(IMAGE_NT_HEADERS*)(base+dos->e_lfanew);
+    if(!readable(nt,sizeof *nt) || nt->Signature!=IMAGE_NT_SIGNATURE) return 0;
+    SIZE_T size=nt->OptionalHeader.SizeOfImage;
+    if(size<128) return 0;
+
+    int hits=0;
+    for(SIZE_T i=0;i+96<size;i++){
+        if(base[i]!=0x81) continue;                       /* cmp r/m32, imm32 */
+        for(int ol=1;ol<=3;ol++){                         /* operand bytes    */
+            BYTE* w1=base+i;
+            if(*(DWORD*)(w1+1+ol)!=1024u) continue;       /* width == 1024    */
+            BYTE* j=w1+1+ol+4;
+            if(j[0]!=0x74) continue;                      /* je short         */
+            BYTE* w2=j+2;
+            if(w2[0]!=0x81 || memcmp(w2+1,w1+1,ol)!=0) continue;  /* same operand */
+            if(*(DWORD*)(w2+1+ol)!=MODE_OLD_W) continue;  /* width == 1280    */
+
+            /* the height compare uses a different operand of the same length */
+            DWORD* himm=NULL;
+            for(BYTE* h=w2+1+ol+4; h+8<base+size && h<w2+MODE_H_SEARCH; h++){
+                if(h[0]!=0x81) continue;
+                if(*(DWORD*)(h+1+ol)==MODE_OLD_H){ himm=(DWORD*)(h+1+ol); break; }
+            }
+            if(!himm) continue;
+
+            if(write_imm((DWORD*)(w2+1+ol),MODE_NEW_W) && write_imm(himm,MODE_NEW_H))
+                hits++;
+            break;
+        }
+    }
+    return hits;
+}
+
+/* Scanning a 4 MB image on every poll would be wasteful, and once rewritten
+ * the pattern no longer matches anyway, so each module base is done once. */
+static BYTE* g_wsDone[2]={NULL,NULL};
+static void widen_module(const char* name,int slot){
+    HMODULE m=NULL;
+    if(!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,name,&m) || !m){
+        g_wsDone[slot]=NULL; return;                      /* unloaded: re-arm */
+    }
+    if(g_wsDone[slot]==(BYTE*)m) return;
+    g_wsDone[slot]=(BYTE*)m;
+    widen_modes_in((BYTE*)m);
+}
+static void widen_display_modes(void){
+    widen_module("i82sim.dll",0);
+    widen_module("I82ShellDll.dll",1);
+}
+
 /* Applying the heap hooks is idempotent: IATHookByAddr only matches the
  * untouched API address, so a second pass over an already-patched table
  * changes nothing. That lets both the loader hook and the backstop poll call
@@ -261,6 +349,7 @@ static void hook_messagebox(const char* mod){
 static void install_heap_hooks(void){
     hook_messagebox("i82sim.dll");      /* both are no-ops while unloaded */
     hook_messagebox("I82ShellDll.dll");
+    widen_display_modes();
     HMODULE s=NULL;
     if(!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                            "i82sim.dll",&s) || !s){ g_i82Base=NULL; return; }
