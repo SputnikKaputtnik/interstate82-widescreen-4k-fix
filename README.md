@@ -61,6 +61,12 @@ gcc -shared -s -Wl,--enable-stdcall-fixup -o dinput.dll dinput.c dinput.def
 
 The resulting `dinput.dll` must stay beside `dinput_orig.dll`. The export definition forwards all non-intercepted DirectInput exports to `dinput_orig.dll`.
 
+The optional draw-distance tool builds the same way, as a plain console program:
+
+```sh
+gcc -O2 -s -o patch_viewdistance.exe patch_viewdistance.c
+```
+
 ## Scope and safety
 
 - The source is a targeted compatibility experiment, not a general DirectInput wrapper.
@@ -74,7 +80,7 @@ The resulting `dinput.dll` must stay beside `dinput_orig.dll`. The export defini
 
 ## Optional: longer draw distance
 
-`patch_viewdistance.py` is a separate, optional tool. It has nothing to do with the shim and is not needed to play — it edits the game's own level data to draw the world further out.
+`patch_viewdistance.exe` is a separate, optional tool. It has nothing to do with the shim and is not needed to play — it edits the game's own level data to draw the world further out. The same tool is also available as a Python script, `patch_viewdistance.py`; both produce byte-identical results.
 
 Interstate '82 stores a `World_Data` block per level as plain text inside `i82.zfs`, and `i82perf.ini`'s `Far_Clipping_Plane = 2` is already the highest setting the game offers. The real values are there:
 
@@ -87,6 +93,19 @@ The two are equal on purpose: the fog is what hides the edge where the world sto
 
 On the machine this was developed against it cost nothing measurable — 107 fps at 3840x2160, against 100 before. The engine is not limited by geometry here; the short view distance was a decision for 1999 hardware.
 
+**The simple way:** download `patch_viewdistance.exe` from the [latest release](https://github.com/SputnikKaputtnik/interstate82-win11-compat-shim/releases/latest), put it in the game folder next to `i82.zfs`, and double-click it. It applies clipping 3x and fog 2x and shows what it changed. Double-clicking it again offers to put the original draw distance back. You can also drop `i82.zfs` onto it wherever the program is. Windows may warn about an unrecognized program the first time, because the exe is not code-signed; the source is `patch_viewdistance.c` in this repository.
+
+From a command prompt it takes options:
+
+```sh
+patch_viewdistance.exe --dry-run                   # show what would change
+patch_viewdistance.exe --clip 4 --fog 2.5          # other factors
+patch_viewdistance.exe --restore                   # undo
+patch_viewdistance.exe "D:\Games\Interstate 82"    # another game folder
+```
+
+With Python installed, the script does the same. Note that it only shows what would change unless you pass `--apply`:
+
 ```sh
 python patch_viewdistance.py                      # show what would change
 python patch_viewdistance.py --apply              # clipping 3x, fog 2x
@@ -94,7 +113,7 @@ python patch_viewdistance.py --clip 4 --fog 2.5 --apply
 python patch_viewdistance.py --restore            # undo
 ```
 
-It edits your installed `i82.zfs`. Before the first change it keeps an untouched copy as `i82.zfs.original` beside it and always computes from that copy, so different factors never compound and `--restore` always works. Values live in fixed-width fields, so each is rewritten to the same byte length: every offset in the archive stays valid and nothing is repacked. Add `--game` if your installation is not in the default GOG location. Start a mission to see the difference — the menu shows nothing of it.
+Either way, it edits your installed `i82.zfs`. Before the first change it keeps an untouched copy as `i82.zfs.original` beside it and always computes from that copy, so different factors never compound and `--restore` always works. Values live in fixed-width fields, so each is rewritten to the same byte length: every offset in the archive stays valid and nothing is repacked. The exe finds the archive next to itself, in the current folder or in the default GOG location; the script looks in the default GOG location. Pass `--game` with your installation folder to either of them otherwise. Close the game before running it. Start a mission to see the difference — the menu shows nothing of it.
 
 The tool ships no game data and redistributes nothing; it changes files you already own.
 
