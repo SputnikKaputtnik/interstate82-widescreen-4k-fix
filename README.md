@@ -35,9 +35,9 @@ The shim no longer hardcodes any address inside `i82sim.dll`, but it has only be
 
 1. Back up the game directory.
 2. Download DDrawCompat upstream and copy its `ddraw.dll` next to `i82stubz.exe`.
-3. Build `dinput.dll` from this repository, or use a release artifact when one is provided.
+3. Download `dinput.dll` and `DDrawCompat-i82stubz.ini` from the [latest release](https://github.com/SputnikKaputtnik/interstate82-win11-compat-shim/releases/latest). `SHA256SUMS.txt` there lets you verify both. If you would rather not run a prebuilt binary, build `dinput.dll` yourself (see [Build](#build)); the profile is also in this repository.
 4. Copy the 32-bit system DLL `%WINDIR%\SysWOW64\dinput.dll` into the game directory as `dinput_orig.dll`.
-5. Copy the built DLL and the included DDrawCompat profile as follows:
+5. Place the files as follows:
 
    - `dinput.dll` → game directory, next to `i82stubz.exe`
    - `dinput_orig.dll` → game directory, next to `i82stubz.exe`
