@@ -10,7 +10,7 @@ It also fixes the crashes and input problems that stop the game on modern Window
 
 Tested on Windows 11 with an NVIDIA RTX 4070 Ti.
 
-**Keywords:** Interstate 82 4K patch, Interstate '82 widescreen patch, Interstate 82 1080p, 2160p, 16:9 fix, Windows 11 crash fix, GOG, DDrawCompat, resolution patch.
+**Keywords:** Interstate 82 4K patch, Interstate '82 widescreen patch, Interstate 82 1080p, 2160p, 16:9 fix, Windows 11 crash fix, GOG, DDrawCompat, resolution patch, draw distance, view distance, fog.
 
 ## What it fixes
 
