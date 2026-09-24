@@ -128,6 +128,18 @@ Either start the game first and RTSS afterwards, which works because injecting i
 **The video options only offer 4:3 modes.**
 `SupportedResolutions` is missing from the DDrawCompat profile, or the profile is not named after the executable (`DDrawCompat-i82stubz.ini`).
 
+**The game crashes to the desktop when you Alt+Tab out, or cars briefly vanish after you come back.**
+Add this line to `DDrawCompat-i82stubz.ini`:
+
+```ini
+AltTabFix = keepvidmem(1)
+```
+
+It stops the game from losing its video memory when it goes to the background, so it has nothing to rebuild when it returns. In testing it removed the Alt+Tab crash, which otherwise came within three to five Alt+Tabs in a mission, and cars no longer disappear for a moment afterwards. It is not in the included profile yet because it has only been tested briefly. The crash sits in DDrawCompat's presentation path and is reported upstream as [narzoul/DDrawCompat#625](https://github.com/narzoul/DDrawCompat/issues/625). The same crash can still happen now and then when leaving or restarting a mission.
+
+**"Display Error: Interstate 82 is unable to set your chosen screen resolution" after "Restart Mission", followed by "World Init failed" and a loop of error messages.**
+A known problem at 1920x1080 and 3840x2160 since the first widescreen version; it does not happen at the game's own resolutions. The game rechecks the resolution when a mission is restarted, and that path does not accept the added modes yet. It is being worked on. Until then, avoid "Restart Mission" at those resolutions. If you are stuck in the loop, end `i82stubz.exe` in Task Manager.
+
 ## Credits
 
 - [DDrawCompat](https://github.com/narzoul/DDrawCompat) by narzoul provides the DirectDraw/Direct3D 1-7 compatibility layer. Its DLL is not included here.
