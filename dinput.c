@@ -10,8 +10,13 @@
  * localized names there (and I82's path may observe them empty); the bridge
  * supplies the canonical English DI names I82 expects. The keyboard scan code
  * comes from dwOfs (the field I82 itself copies from the callback object),
- * with dwType only as a fallback. Every other DirectInput export remains a
- * forwarder.
+ * with dwType only as a fallback. Every other DirectInput export is passed
+ * straight through to the real DLL.
+ *
+ * The real DirectInput is found at run time: a dinput_orig.dll next to the
+ * game wins if present (older installs, or a deliberate override); otherwise
+ * the system's own dinput.dll is loaded by full path. The game is a 32-bit
+ * process, so Windows redirects that System32 path to SysWOW64 by itself.
  */
 #define DIRECTINPUT_VERSION 0x0700
 #include <windows.h>
@@ -130,11 +135,41 @@ typedef HRESULT (WINAPI *CreateDevice_t)(void*,REFGUID,LPDIRECTINPUTDEVICEA*,LPU
 typedef BOOL    (CALLBACK *EnumCB_t)(LPCDIDEVICEOBJECTINSTANCEA,LPVOID);
 typedef HRESULT (WINAPI *EnumObjects_t)(void*,EnumCB_t,LPVOID,DWORD);
 typedef HRESULT (WINAPI *GetObjInfo_t)(void*,LPDIDEVICEOBJECTINSTANCEA,DWORD,DWORD);
+typedef HRESULT (WINAPI *GetDevInfo_t)(void*,LPDIDEVICEINSTANCEA);
+typedef BOOL    (CALLBACK *EnumDevCB_t)(LPCDIDEVICEINSTANCEA,LPVOID);
+typedef HRESULT (WINAPI *EnumDevices_t)(void*,DWORD,EnumDevCB_t,LPVOID,DWORD);
 static DICreateA_t     g_realDICreateA=NULL;
 static CreateDevice_t  g_realCreateDevice=NULL;
+static EnumDevices_t   g_realEnumDevices=NULL;
 static EnumObjects_t   g_realEnumObjects=NULL;
 static GetObjInfo_t    g_realGetObjInfo=NULL;
+static GetDevInfo_t    g_realGetDevInfo=NULL;
 static const GUID KBD={0x6F1D2B61,0xD5A0,0x11CF,{0xBF,0xC7,0x44,0x45,0x53,0x54,0x00,0x00}};
+static const GUID MOUSE={0x6F1D2B60,0xD5A0,0x11CF,{0xBF,0xC7,0x44,0x45,0x53,0x54,0x00,0x00}};
+
+/* Names for the system keyboard and mouse come from DirectInput's string
+ * resources, which Windows keeps in a language file beside the DLL
+ * (SysWOW64\<lang>\dinput.dll.mui). Loaded from System32 the real DLL finds
+ * that file and hands out localized names: "Tastatur", "Maus", "Leertaste".
+ * I82 cannot register its controls with those -- every action then "does not
+ * exist" and the keyboard is dead in missions. A renamed copy in the game
+ * folder has no language file and returns empty names, which I82 handles.
+ * That accident is what made earlier versions work, so the proxy now
+ * produces the same result on purpose: empty device names for the system
+ * keyboard and mouse, canonical English key names, and empty names for
+ * anything unmapped on those two devices. */
+enum { DEV_OTHER=0, DEV_KEYBOARD, DEV_MOUSE };
+static int system_device(const GUID* g){
+    if(!memcmp(g,&KBD,sizeof(GUID))) return DEV_KEYBOARD;
+    if(!memcmp(g,&MOUSE,sizeof(GUID))) return DEV_MOUSE;
+    return DEV_OTHER;
+}
+static int device_kind(void* self){
+    if(!g_realGetDevInfo) return DEV_OTHER;
+    DIDEVICEINSTANCEA d; ZeroMemory(&d,sizeof d); d.dwSize=sizeof d;
+    if(FAILED(g_realGetDevInfo(self,&d))) return DEV_OTHER;
+    return system_device(&d.guidInstance);
+}
 
 static DWORD keyboard_scancode(const DIDEVICEOBJECTINSTANCEA* o){
     DWORD ofs=o->dwOfs;
@@ -143,28 +178,55 @@ static DWORD keyboard_scancode(const DIDEVICEOBJECTINSTANCEA* o){
     if(instance<=0xFF && dik_name(instance)) return instance;
     return ofs<=0xFF ? ofs : instance;
 }
-static void override_keyboard_name(LPDIDEVICEOBJECTINSTANCEA o){
+static void override_object_name(LPDIDEVICEOBJECTINSTANCEA o,int kind){
     if(!o) return;
     DWORD dik=keyboard_scancode(o);
     const char* mapped=dik_name(dik);
     if(mapped) lstrcpynA(o->tszName,mapped,MAX_PATH);
+    else if(kind!=DEV_OTHER) o->tszName[0]=0;
 }
 
-typedef struct { EnumCB_t callback; LPVOID ref; } EnumContext;
+typedef struct { EnumCB_t callback; LPVOID ref; int kind; } EnumContext;
 static BOOL CALLBACK Hooked_EnumCallback(LPCDIDEVICEOBJECTINSTANCEA inst,LPVOID ref){
     EnumContext* c=(EnumContext*)ref;
-    override_keyboard_name((LPDIDEVICEOBJECTINSTANCEA)inst);
+    override_object_name((LPDIDEVICEOBJECTINSTANCEA)inst,c->kind);
     return c->callback(inst,c->ref);
 }
 static HRESULT WINAPI Hooked_EnumObjects(void* self,EnumCB_t callback,LPVOID ref,DWORD flags){
     EnumContext c;
-    c.callback=callback; c.ref=ref;
+    c.callback=callback; c.ref=ref; c.kind=device_kind(self);
     return g_realEnumObjects(self,Hooked_EnumCallback,&c,flags);
 }
 static HRESULT WINAPI Hooked_GetObjectInfo(void* self,LPDIDEVICEOBJECTINSTANCEA obj,DWORD which,DWORD how){
     HRESULT hr=g_realGetObjInfo(self,obj,which,how);
-    if(SUCCEEDED(hr)) override_keyboard_name(obj);
+    if(SUCCEEDED(hr)) override_object_name(obj,device_kind(self));
     return hr;
+}
+static void blank_device_names(LPDIDEVICEINSTANCEA d){
+    if(system_device(&d->guidInstance)!=DEV_OTHER){
+        d->tszInstanceName[0]=0;
+        d->tszProductName[0]=0;
+    }
+}
+static HRESULT WINAPI Hooked_GetDeviceInfo(void* self,LPDIDEVICEINSTANCEA d){
+    HRESULT hr=g_realGetDevInfo(self,d);
+    if(SUCCEEDED(hr) && d) blank_device_names(d);
+    return hr;
+}
+typedef struct { EnumDevCB_t callback; LPVOID ref; } EnumDevContext;
+static BOOL CALLBACK Hooked_EnumDevCallback(LPCDIDEVICEINSTANCEA inst,LPVOID ref){
+    EnumDevContext* c=(EnumDevContext*)ref;
+    DIDEVICEINSTANCEA copy;
+    DWORD n=inst->dwSize<sizeof copy ? inst->dwSize : sizeof copy;
+    ZeroMemory(&copy,sizeof copy);
+    memcpy(&copy,inst,n);
+    blank_device_names(&copy);
+    return c->callback(&copy,c->ref);
+}
+static HRESULT WINAPI Hooked_EnumDevices(void* self,DWORD type,EnumDevCB_t callback,LPVOID ref,DWORD flags){
+    EnumDevContext c;
+    c.callback=callback; c.ref=ref;
+    return g_realEnumDevices(self,type,Hooked_EnumDevCallback,&c,flags);
 }
 static void patch_vtable_slot(void** vtable,int index,void* replacement,void** original){
     if(!vtable || (original && *original)) return;
@@ -177,28 +239,89 @@ static void patch_vtable_slot(void** vtable,int index,void* replacement,void** o
 }
 static HRESULT WINAPI Hooked_CreateDevice(void* self,REFGUID guid,LPDIRECTINPUTDEVICEA* out,LPUNKNOWN outer){
     HRESULT hr=g_realCreateDevice(self,guid,out,outer);
-    if(SUCCEEDED(hr) && out && *out && guid && !memcmp(guid,&KBD,sizeof(GUID))){
+    if(SUCCEEDED(hr) && out && *out && guid && system_device(guid)!=DEV_OTHER){
+        /* keyboard and mouse share one vtable in the system DLL */
         void** vtable=*(void***)(*out);
         patch_vtable_slot(vtable,4,(void*)Hooked_EnumObjects,(void**)&g_realEnumObjects);
         patch_vtable_slot(vtable,14,(void*)Hooked_GetObjectInfo,(void**)&g_realGetObjInfo);
+        patch_vtable_slot(vtable,15,(void*)Hooked_GetDeviceInfo,(void**)&g_realGetDevInfo);
     }
     return hr;
 }
 
+/* The real DirectInput. Never called from DllMain, so loading is safe here. */
+static HMODULE g_realDinput=NULL;
+static HMODULE real_dinput(void){
+    if(g_realDinput) return g_realDinput;
+    HMODULE m=GetModuleHandleA("dinput_orig.dll");
+    if(!m) m=LoadLibraryA("dinput_orig.dll");
+    if(!m){
+        char path[MAX_PATH];
+        UINT n=GetSystemDirectoryA(path,MAX_PATH);
+        if(n && n<MAX_PATH-12){
+            lstrcatA(path,"\\dinput.dll");
+            m=LoadLibraryA(path);
+        }
+    }
+    if(m){
+        /* two threads may race here; each LoadLibrary is balanced by the
+           module staying loaded for the life of the process, so the loser's
+           extra reference is harmless */
+        g_realDinput=m;
+    }
+    return m;
+}
+static FARPROC real_proc(const char* name){
+    HMODULE m=real_dinput();
+    return m ? GetProcAddress(m,name) : NULL;
+}
+
 HRESULT WINAPI DirectInputCreateA(HINSTANCE hinst,DWORD version,LPDIRECTINPUTA* out,LPUNKNOWN outer){
     if(!g_realDICreateA){
-        HMODULE original=GetModuleHandleA("dinput_orig.dll");
-        if(!original) original=LoadLibraryA("dinput_orig.dll");
-        if(!original) return E_FAIL;
-        g_realDICreateA=(DICreateA_t)GetProcAddress(original,"DirectInputCreateA");
+        g_realDICreateA=(DICreateA_t)real_proc("DirectInputCreateA");
         if(!g_realDICreateA) return E_FAIL;
     }
     HRESULT hr=g_realDICreateA(hinst,version,out,outer);
     if(SUCCEEDED(hr) && out && *out){
         void** vtable=*(void***)(*out);
         patch_vtable_slot(vtable,3,(void*)Hooked_CreateDevice,(void**)&g_realCreateDevice);
+        patch_vtable_slot(vtable,4,(void*)Hooked_EnumDevices,(void**)&g_realEnumDevices);
     }
     return hr;
+}
+
+/* ---- remaining exports: plain pass-through to the real DLL --------------- */
+typedef HRESULT (WINAPI *DICreateW_t)(HINSTANCE,DWORD,LPDIRECTINPUTW*,LPUNKNOWN);
+typedef HRESULT (WINAPI *DICreateEx_t)(HINSTANCE,DWORD,REFIID,LPVOID*,LPUNKNOWN);
+typedef HRESULT (WINAPI *GetClassObject_t)(REFCLSID,REFIID,LPVOID*);
+typedef HRESULT (WINAPI *NoArgs_t)(void);
+
+HRESULT WINAPI DirectInputCreateW(HINSTANCE hinst,DWORD version,LPDIRECTINPUTW* out,LPUNKNOWN outer){
+    DICreateW_t f=(DICreateW_t)real_proc("DirectInputCreateW");
+    return f ? f(hinst,version,out,outer) : E_FAIL;
+}
+HRESULT WINAPI DirectInputCreateEx(HINSTANCE hinst,DWORD version,REFIID iid,LPVOID* out,LPUNKNOWN outer){
+    DICreateEx_t f=(DICreateEx_t)real_proc("DirectInputCreateEx");
+    return f ? f(hinst,version,iid,out,outer) : E_FAIL;
+}
+HRESULT WINAPI DllCanUnloadNow(void){
+    /* the proxy pins itself, and an unloaded real DLL has nothing to say */
+    if(!g_realDinput) return S_FALSE;
+    NoArgs_t f=(NoArgs_t)GetProcAddress(g_realDinput,"DllCanUnloadNow");
+    return f ? f() : S_FALSE;
+}
+HRESULT WINAPI DllGetClassObject(REFCLSID clsid,REFIID iid,LPVOID* out){
+    GetClassObject_t f=(GetClassObject_t)real_proc("DllGetClassObject");
+    if(!f){ if(out) *out=NULL; return CLASS_E_CLASSNOTAVAILABLE; }
+    return f(clsid,iid,out);
+}
+HRESULT WINAPI DllRegisterServer(void){
+    NoArgs_t f=(NoArgs_t)real_proc("DllRegisterServer");
+    return f ? f() : E_FAIL;
+}
+HRESULT WINAPI DllUnregisterServer(void){
+    NoArgs_t f=(NoArgs_t)real_proc("DllUnregisterServer");
+    return f ? f() : E_FAIL;
 }
 
 /* ---- IAT hooking ------------------------------------------------------- */

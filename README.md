@@ -18,7 +18,7 @@ Project page: https://sputnikkaputtnik.github.io/interstate82-widescreen-4k-fix/
 
 - DirectDraw/Direct3D 1-7 presentation through [DDrawCompat](https://github.com/narzoul/DDrawCompat), configured for borderless fullscreen.
 - A mission/level-load crash in the tested GOG build by applying a narrowly targeted heap-compatibility workaround to `i82sim.dll`.
-- Empty or localized DirectInput keyboard-object names that prevent normal in-game key binding. The proxy exposes canonical English DirectInput keyboard names only for the keyboard path used by I82.
+- Keyboard controls that are dead in missions. DirectInput takes the names of the keyboard, the mouse and every key from Windows' language files, so on a German system it reports "Tastatur", "Maus" and "Leertaste". I82 cannot register its controls with localized names. The menus still work, but every in-mission action "does not exist". The proxy gives I82 empty names for the system keyboard and mouse, and the canonical English DirectInput name for every key, whatever the Windows language.
 - Modal developer diagnostics from the input system (`CInputBinding::bindControl` and its siblings). One appears between the menu and the load screen on every mission start and has to be dismissed by hand, although it reports a condition a player cannot act on. They are answered automatically and written to `dinput_msgbox.log` instead.
 - The absence of any widescreen resolution. I82 accepts only four hardcoded modes (640x480, 800x600, 1024x768, 1280x1024), so no configuration file can produce a 16:9 frame. The shim widens that filter to offer **1920x1080** in place of 1280x1024, and **3840x2160** in place of 1024x768. The engine itself handles the wider frame correctly: the field of view extends horizontally (Hor+), the HUD moves to the screen edges, and it scales with the resolution.
 
@@ -31,25 +31,24 @@ The shim no longer hardcodes any address inside `i82sim.dll`, but it has only be
 - A legally installed, unmodified GOG copy of Interstate '82.
 - Windows 10 or 11, 64-bit.
 - The current release of [DDrawCompat](https://github.com/narzoul/DDrawCompat/releases). Download it from its upstream project; do not redistribute a copy from this repository.
-- A 32-bit copy of the system DirectInput DLL, normally `%WINDIR%\SysWOW64\dinput.dll`.
 
 ## Installation
 
 1. Back up the game directory.
 2. Download DDrawCompat upstream and copy its `ddraw.dll` next to `i82stubz.exe`.
 3. Download `dinput.dll` and `DDrawCompat-i82stubz.ini` from the [latest release](https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest). `SHA256SUMS.txt` there lets you verify both. If you would rather not run a prebuilt binary, build `dinput.dll` yourself (see [Build](#build)); the profile is also in this repository.
-4. Copy the 32-bit system DLL `%WINDIR%\SysWOW64\dinput.dll` into the game directory as `dinput_orig.dll`.
-5. Place the files as follows:
+4. Place the files as follows:
 
    - `dinput.dll` → game directory, next to `i82stubz.exe`
-   - `dinput_orig.dll` → game directory, next to `i82stubz.exe`
    - `DDrawCompat-i82stubz.ini` → game directory, next to `i82stubz.exe`
 
    The profile's `SupportedResolutions` line is required for widescreen: the game offers 1920x1080 and 3840x2160 once the shim is in place, but DDrawCompat must accept the modes as well, and its default list holds 4:3 modes only. Select the resolution in the game under Options → Video.
 
    `dinput.def` is only needed to build the DLL; it does not need to be copied to the game directory.
 
-6. Start `i82stubz.exe` normally. No DxWnd launcher is required.
+5. Start `i82stubz.exe` normally. No DxWnd launcher is required.
+
+Upgrading from v1.2 or earlier: replace `dinput.dll`. The `dinput_orig.dll` that older versions needed can stay or be deleted. If it is there, the shim still uses it.
 
 The included DDrawCompat profile deliberately uses `FullscreenMode = borderless`, not exclusive fullscreen. It was the stable, confirmed mode for this setup.
 
@@ -61,7 +60,7 @@ Build with a 32-bit MinGW-w64 GCC toolchain. In an MSYS2 MinGW32 shell:
 gcc -shared -s -Wl,--enable-stdcall-fixup -o dinput.dll dinput.c dinput.def
 ```
 
-The resulting `dinput.dll` must stay beside `dinput_orig.dll`. The export definition forwards all non-intercepted DirectInput exports to `dinput_orig.dll`.
+The shim loads the real DirectInput itself: a `dinput_orig.dll` next to the game if one is there, otherwise the system's `dinput.dll`. The game is a 32-bit process, so Windows serves the 32-bit DLL from SysWOW64. All DirectInput exports the shim does not change are passed straight through to it.
 
 The optional draw-distance tool builds the same way, as a plain console program:
 
@@ -75,10 +74,10 @@ gcc -O2 -s -o patch_viewdistance.exe patch_viewdistance.c
 - For widescreen it rewrites up to four immediate operands in the display-mode filter of `i82sim.dll` and `I82ShellDll.dll`: the accepted 1280x1024 pair becomes 1920x1080, and 1024x768 becomes 3840x2160 on a desktop that can show it. The site is located by matching the instruction shape, not a fixed address; the height compare of the second slot is reached by following the filter's own branch rather than by searching nearby, and nothing is written unless every part matches.
 - Both game modules are packed, so their code is still encrypted for a short while after they appear in the loader's module list. The patch therefore never writes while a `LoadLibrary` call is in progress, and it keeps retrying until a scan actually matches instead of assuming the first attempt saw real code.
 - It redirects three groups of imports: `HeapSize`, `HeapReAlloc` and `HeapFree` in `i82sim.dll`; the `LoadLibrary` family in `i82stubz.exe`, so the heap hooks are in place the moment the module is mapped rather than a poll interval later; and `MessageBoxA` in `i82sim.dll` and `I82ShellDll.dll`.
-- The DirectInput hook affects only the system keyboard object.
+- The DirectInput hooks change only names: the device names of the system keyboard and mouse, and the names of their keys and buttons. Input itself is untouched.
 - Only popups whose caption begins with `CInput` are suppressed. Everything else is passed through untouched.
 - The only file written is `dinput_msgbox.log`, and only when such a popup is suppressed. There is no telemetry, no registry access and no background diagnostics.
-- Remove `dinput.dll`, `dinput_orig.dll`, `ddraw.dll`, and `DDrawCompat-i82stubz.ini` to revert this method. Restore any files from your backup if they existed before installation.
+- Remove `dinput.dll`, `ddraw.dll`, `DDrawCompat-i82stubz.ini` and, if an older version left one, `dinput_orig.dll` to revert this method. Restore any files from your backup if they existed before installation.
 
 ## Optional: longer draw distance
 
