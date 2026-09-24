@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interstate '82 Widescreen &amp; 4K Patch + Windows 11 Fix (GOG)</title>
+<meta name="description" content="Play Interstate '82 in 1920x1080 or 3840x2160 on Windows 10 and 11. Free patch for the GOG version: adds 16:9 widescreen and 4K resolutions, fixes the mission-load crash and key binding, and triples the draw distance.">
+<link rel="canonical" href="https://sputnikkaputtnik.github.io/interstate82-widescreen-4k-fix/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Interstate '82 Widescreen &amp; 4K Patch + Windows 11 Fix">
+<meta property="og:description" content="1920x1080 and 3840x2160 for Interstate '82 on Windows 10/11, plus crash, key-binding and draw-distance fixes. Free and open source.">
+<meta property="og:url" content="https://sputnikkaputtnik.github.io/interstate82-widescreen-4k-fix/">
+<meta property="og:image" content="https://sputnikkaputtnik.github.io/interstate82-widescreen-4k-fix/og-image.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Interstate '82 Widescreen & 4K Fix",
+  "alternateName": ["Interstate 82 widescreen patch", "Interstate '82 Windows 11 fix", "interstate82-widescreen-4k-fix"],
+  "description": "Compatibility patch for the GOG version of Interstate '82: adds 1920x1080 and 3840x2160, fixes the mission-load crash and key binding on Windows 10 and 11, and includes an optional draw-distance tool.",
+  "applicationCategory": "GameApplication",
+  "operatingSystem": "Windows 10, Windows 11",
+  "softwareVersion": "1.2",
+  "license": "https://opensource.org/licenses/MIT",
+  "isAccessibleForFree": true,
+  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+  "downloadUrl": "https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest",
+  "codeRepository": "https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix",
+  "screenshot": "https://sputnikkaputtnik.github.io/interstate82-widescreen-4k-fix/og-image.jpg",
+  "author": {"@type": "Person", "name": "SputnikKaputtnik", "url": "https://github.com/SputnikKaputtnik"}
+}
+</script>
+<style>
+:root {
+  --bg: #0d0b14;
+  --panel: #17142a;
+  --line: #2c2750;
+  --text: #e9e6f5;
+  --muted: #a8a2c4;
+  --accent: #ff4fa3;
+  --accent2: #37d6ff;
+  --code: #221e3d;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+main { max-width: 820px; margin: 0 auto; padding: 0 16px 64px; }
+header { padding: 56px 0 24px; border-bottom: 1px solid var(--line); margin-bottom: 32px; }
+.kicker { color: var(--accent2); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; font-size: 13px; margin: 0 0 8px; }
+h1 { font-size: clamp(28px, 5vw, 42px); line-height: 1.15; margin: 0 0 16px; }
+h1 span { color: var(--accent); }
+h2 { font-size: 24px; margin: 48px 0 12px; }
+h3 { font-size: 18px; margin: 28px 0 6px; }
+p, li { color: var(--text); }
+.lead { font-size: 19px; color: var(--muted); margin: 0 0 24px; }
+a { color: var(--accent2); }
+.buttons { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn {
+  display: inline-block; padding: 12px 20px; border-radius: 8px; font-weight: 600; text-decoration: none;
+  background: var(--accent); color: #fff;
+}
+.btn.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 24px 0 0; padding: 0; list-style: none; }
+.facts li { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; font-size: 15px; color: var(--muted); }
+.facts strong { display: block; color: var(--text); font-size: 18px; }
+figure { margin: 24px 0; }
+figure img { width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); display: block; }
+figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; }
+code { background: var(--code); padding: 1px 6px; border-radius: 4px; font-size: .92em; }
+pre { background: var(--code); padding: 14px 16px; border-radius: 8px; overflow-x: auto; font-size: 14px; }
+pre code { background: none; padding: 0; }
+ol li, ul li { margin: 6px 0; }
+.note { background: var(--panel); border-left: 3px solid var(--accent2); padding: 12px 16px; border-radius: 0 8px 8px 0; color: var(--muted); }
+footer { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 20px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <p class="kicker">Free patch for the GOG version &middot; Windows 10 &amp; 11</p>
+  <h1>Interstate '82 in <span>widescreen and 4K</span>, fixed for Windows 11</h1>
+  <p class="lead">Interstate '82 only ever offered 4:3 and 5:4 resolutions and crashes on modern Windows. This patch adds <strong>1920x1080</strong> and <strong>3840x2160</strong> to the game's own video options, fixes the mission-load crash and the broken key binding, and can triple the draw distance.</p>
+  <div class="buttons">
+    <a class="btn" href="https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest">Download the latest release</a>
+    <a class="btn secondary" href="https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix">Source code on GitHub</a>
+  </div>
+  <ul class="facts">
+    <li><strong>1920x1080 &amp; 4K</strong>Real 16:9, Hor+, no stretching</li>
+    <li><strong>Windows 10 / 11</strong>Crash and key-binding fixes</li>
+    <li><strong>3x draw distance</strong>Optional, one double-click</li>
+    <li><strong>MIT license</strong>No game files included</li>
+  </ul>
+</header>
+
+<h2>What the patch does</h2>
+<ul>
+  <li><strong>Widescreen and 4K resolutions.</strong> The game accepts exactly four hardcoded modes: 640x480, 800x600, 1024x768 and 1280x1024. The patch widens that filter, so 1920x1080 and 3840x2160 appear under Options &rarr; Graphics. The view extends sideways (Hor+) instead of stretching, the HUD moves to the screen edges and scales with the resolution.</li>
+  <li><strong>Mission-load crash fixed.</strong> On Windows 10 and 11 the GOG version can crash while a mission loads. The patch contains a narrowly targeted heap fix for it.</li>
+  <li><strong>Key binding fixed.</strong> Modern Windows reports empty or localized DirectInput key names, so the controls screen cannot bind keys and the game complains that controls do not exist. The patch supplies the English key names the game expects.</li>
+  <li><strong>No developer popups.</strong> A diagnostic message box that appears at every mission start is answered automatically.</li>
+  <li><strong>Borderless fullscreen</strong> through <a href="https://github.com/narzoul/DDrawCompat">DDrawCompat</a>. No DxWnd, no launcher: start the game as usual.</li>
+</ul>
+
+<figure>
+  <img src="video-options-3840x2160.webp" width="2000" height="1528" alt="Interstate '82 Graphic Options screen showing the 3840x2160x32 screen mode on an NVIDIA GeForce RTX 4070 Ti">
+  <figcaption>The game's own Graphic Options, offering 3840x2160 after the patch.</figcaption>
+</figure>
+
+<p>Performance is not an issue: on an RTX 4070 Ti the game runs at about 240 FPS in 1920x1080 and about 100 FPS in 3840x2160. The frame rate is not capped.</p>
+
+<h2>Installation</h2>
+<ol>
+  <li>Back up your Interstate '82 folder (GOG default: <code>C:\Program Files (x86)\GOG Galaxy\Games\Interstate 82</code>).</li>
+  <li>Download <code>dinput.dll</code> and <code>DDrawCompat-i82stubz.ini</code> from the <a href="https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest">latest release</a>. <code>SHA256SUMS.txt</code> in the same release lets you verify them.</li>
+  <li>Download <a href="https://github.com/narzoul/DDrawCompat/releases">DDrawCompat</a> and take its <code>ddraw.dll</code>.</li>
+  <li>Copy <code>%WINDIR%\SysWOW64\dinput.dll</code> and rename the copy to <code>dinput_orig.dll</code>.</li>
+  <li>Put <code>dinput.dll</code>, <code>dinput_orig.dll</code>, <code>ddraw.dll</code> and <code>DDrawCompat-i82stubz.ini</code> into the game folder, next to <code>i82stubz.exe</code>.</li>
+  <li>Start the game normally and choose the resolution under Options &rarr; Graphics.</li>
+</ol>
+<p class="note">3840x2160 is only offered when your desktop is at least 3840x2160. To undo everything, delete the four files.</p>
+
+<h2>Longer draw distance (optional)</h2>
+<p>The in-game setting is already at its maximum, but the real clipping and fog distances are stored per level in <code>i82.zfs</code>. Download <code>patch_viewdistance.exe</code> from the <a href="https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest">latest release</a>, put it next to <code>i82.zfs</code> and double-click it. It sets the clipping distance to 3x and the fog to 2x, which removes the fog wall without pop-in and costs no measurable performance.</p>
+<p>The tool keeps an untouched copy as <code>i82.zfs.original</code>; double-click again to restore it. Other factors work from a command prompt:</p>
+<pre><code>patch_viewdistance.exe --clip 4 --fog 2.5
+patch_viewdistance.exe --restore</code></pre>
+
+<h2>Troubleshooting</h2>
+<h3>"Where is shell dll?" and "Shell Error!" on startup</h3>
+<p>An overlay hooks the game while it starts. RivaTuner Statistics Server (RTSS, part of MSI Afterburner) does this reliably, with or without this patch. Start the game first and RTSS afterwards, or give <code>i82stubz.exe</code> a profile in RTSS with <em>Application detection level</em> set to <strong>None</strong>.</p>
+<h3>Only 4:3 resolutions in the options</h3>
+<p><code>DDrawCompat-i82stubz.ini</code> is missing, renamed, or its <code>SupportedResolutions</code> line was removed. DDrawCompat only accepts 4:3 modes without it.</p>
+<h3>"Unable to set your chosen screen resolution"</h3>
+<p>Usually a leftover <code>i82stubz.exe</code> from an earlier crash still holds the display mode. End it in Task Manager and start the game again.</p>
+<h3>Car stuck in the terrain</h3>
+<p>Press Esc, type <code>nukeme</code> and press Esc again to self-destruct. This is the official workaround from the game's readme.</p>
+
+<h2>More information</h2>
+<ul>
+  <li><a href="https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix#readme">Full documentation and build instructions</a></li>
+  <li><a href="https://www.pcgamingwiki.com/wiki/Interstate_%2782">Interstate '82 on PCGamingWiki</a></li>
+  <li><a href="https://www.gog.com/game/interstate_82">Interstate '82 on GOG.com</a></li>
+</ul>
+
+<footer>
+  <p>Not affiliated with Activision or GOG. Interstate '82 and its assets belong to their respective owners; this project contains no game files. Presentation layer by <a href="https://github.com/narzoul/DDrawCompat">DDrawCompat</a> (narzoul), not included. Source under the MIT license.</p>
+</footer>
+
+</main>
+</body>
+</html>

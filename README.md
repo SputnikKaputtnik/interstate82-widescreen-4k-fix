@@ -10,6 +10,8 @@ It also fixes the crashes and input problems that stop the game on modern Window
 
 Tested on Windows 11 with an NVIDIA RTX 4070 Ti.
 
+Project page: https://sputnikkaputtnik.github.io/interstate82-widescreen-4k-fix/
+
 **Keywords:** Interstate 82 4K patch, Interstate '82 widescreen patch, Interstate 82 1080p, 2160p, 16:9 fix, Windows 11 crash fix, GOG, DDrawCompat, resolution patch, draw distance, view distance, fog.
 
 ## What it fixes
@@ -35,7 +37,7 @@ The shim no longer hardcodes any address inside `i82sim.dll`, but it has only be
 
 1. Back up the game directory.
 2. Download DDrawCompat upstream and copy its `ddraw.dll` next to `i82stubz.exe`.
-3. Download `dinput.dll` and `DDrawCompat-i82stubz.ini` from the [latest release](https://github.com/SputnikKaputtnik/interstate82-win11-compat-shim/releases/latest). `SHA256SUMS.txt` there lets you verify both. If you would rather not run a prebuilt binary, build `dinput.dll` yourself (see [Build](#build)); the profile is also in this repository.
+3. Download `dinput.dll` and `DDrawCompat-i82stubz.ini` from the [latest release](https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest). `SHA256SUMS.txt` there lets you verify both. If you would rather not run a prebuilt binary, build `dinput.dll` yourself (see [Build](#build)); the profile is also in this repository.
 4. Copy the 32-bit system DLL `%WINDIR%\SysWOW64\dinput.dll` into the game directory as `dinput_orig.dll`.
 5. Place the files as follows:
 
@@ -93,7 +95,7 @@ The two are equal on purpose: the fog is what hides the edge where the world sto
 
 On the machine this was developed against it cost nothing measurable — 107 fps at 3840x2160, against 100 before. The engine is not limited by geometry here; the short view distance was a decision for 1999 hardware.
 
-**The simple way:** download `patch_viewdistance.exe` from the [latest release](https://github.com/SputnikKaputtnik/interstate82-win11-compat-shim/releases/latest), put it in the game folder next to `i82.zfs`, and double-click it. It applies clipping 3x and fog 2x and shows what it changed. Double-clicking it again offers to put the original draw distance back. You can also drop `i82.zfs` onto it wherever the program is. Windows may warn about an unrecognized program the first time, because the exe is not code-signed; the source is `patch_viewdistance.c` in this repository.
+**The simple way:** download `patch_viewdistance.exe` from the [latest release](https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest), put it in the game folder next to `i82.zfs`, and double-click it. It applies clipping 3x and fog 2x and shows what it changed. Double-clicking it again offers to put the original draw distance back. You can also drop `i82.zfs` onto it wherever the program is. Windows may warn about an unrecognized program the first time, because the exe is not code-signed; the source is `patch_viewdistance.c` in this repository.
 
 From a command prompt it takes options:
 
