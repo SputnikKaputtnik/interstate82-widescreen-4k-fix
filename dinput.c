@@ -462,7 +462,7 @@ static int desktop_at_least(DWORD w,DWORD h){
     return dm.dmPelsWidth>=w && dm.dmPelsHeight>=h;
 }
 
-static int widen_modes_in(BYTE* base){
+static int widen_modes_in(BYTE* base,DWORD** witness){
     if(!base) return 0;
     IMAGE_DOS_HEADER* dos=(IMAGE_DOS_HEADER*)base;
     if(!readable(base,0x40) || dos->e_magic!=IMAGE_DOS_SIGNATURE) return 0;
@@ -512,6 +512,7 @@ static int widen_modes_in(BYTE* base){
             if(!write_imm((DWORD*)(w2+1+ol),MODE_NEW_W) || !write_imm(himm,MODE_NEW_H))
                 break;
             hits++;
+            if(witness) *witness=(DWORD*)(w2+1+ol);
             if(w4 && write_imm(w4,MODE2_NEW_W))
                 write_imm(h4,MODE2_NEW_H);
             break;
@@ -539,13 +540,36 @@ static volatile LONG g_inLoad=0;
 static BYTE* g_wsDone[2]={NULL,NULL};
 static BYTE* g_wsSeen[2]={NULL,NULL};
 static int   g_wsTries[2]={0,0};
+/* Where the patch landed: the slot-2 width immediate, which reads 1920 while
+ * the patch is in place. See below for why the module address is not enough. */
+static DWORD* g_wsWitness[2]={NULL,NULL};
+
+/* "Restart Mission" unloads i82sim.dll and loads it again, usually at the very
+ * same address. The poll re-arms only if it happens to see the module absent,
+ * and the gap between unload and reload is often shorter than the 50 ms poll
+ * interval. The fresh copy then carried the old "done" mark, stayed at the
+ * original four resolutions, and the game failed to find the selected
+ * widescreen mode ("Display Error ... unable to set your chosen screen
+ * resolution", then "World Init failed" and a loop of message boxes). So a
+ * module counts as done only while the patched bytes are actually still
+ * there. */
+static int still_widened(int slot){
+    DWORD* w=g_wsWitness[slot];
+    if(!w) return 1;                  /* never matched: nothing to keep up */
+    if(!readable(w,sizeof *w)) return 1;       /* mid-(un)map: next poll */
+    return *w==MODE_NEW_W;
+}
 static void widen_module(const char* name,int slot){
     HMODULE m=NULL;
     if(!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,name,&m) || !m){
-        g_wsDone[slot]=NULL; g_wsSeen[slot]=NULL; g_wsTries[slot]=0;
+        g_wsDone[slot]=NULL; g_wsSeen[slot]=NULL; g_wsTries[slot]=0; g_wsWitness[slot]=NULL;
         return;                                           /* unloaded: re-arm */
     }
-    if(g_wsDone[slot]==(BYTE*)m) return;
+    if(g_wsDone[slot]==(BYTE*)m){
+        if(still_widened(slot)) return;
+        /* same address, original code again: reloaded between two polls */
+        g_wsDone[slot]=NULL; g_wsSeen[slot]=NULL; g_wsTries[slot]=0; g_wsWitness[slot]=NULL;
+    }
     /* Never write into a module that is still being loaded. It appears in the
      * loader's list before its entry point has finished, so the packer is
      * still decrypting the very bytes being patched -- retrying until the
@@ -553,7 +577,9 @@ static void widen_module(const char* name,int slot){
      * and the game then failed to start at any resolution. */
     if(g_inLoad>0) return;
     if(g_wsSeen[slot]!=(BYTE*)m){ g_wsSeen[slot]=(BYTE*)m; g_wsTries[slot]=0; }
-    int hits=widen_modes_in((BYTE*)m);
+    DWORD* witness=NULL;
+    int hits=widen_modes_in((BYTE*)m,&witness);
+    if(hits>0) g_wsWitness[slot]=witness;
     g_wsTries[slot]++;
     if(hits>0 || g_wsTries[slot]>=WS_MAX_TRIES) g_wsDone[slot]=(BYTE*)m;
 #ifdef I82_DIAG
