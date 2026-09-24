@@ -120,11 +120,10 @@ footer { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 20px;
   <li>Back up your Interstate '82 folder (GOG default: <code>C:\Program Files (x86)\GOG Galaxy\Games\Interstate 82</code>).</li>
   <li>Download <code>dinput.dll</code> and <code>DDrawCompat-i82stubz.ini</code> from the <a href="https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest">latest release</a>. <code>SHA256SUMS.txt</code> in the same release lets you verify them.</li>
   <li>Download <a href="https://github.com/narzoul/DDrawCompat/releases">DDrawCompat</a> and take its <code>ddraw.dll</code>.</li>
-  <li>Copy <code>%WINDIR%\SysWOW64\dinput.dll</code> and rename the copy to <code>dinput_orig.dll</code>.</li>
-  <li>Put <code>dinput.dll</code>, <code>dinput_orig.dll</code>, <code>ddraw.dll</code> and <code>DDrawCompat-i82stubz.ini</code> into the game folder, next to <code>i82stubz.exe</code>.</li>
+  <li>Put <code>dinput.dll</code>, <code>ddraw.dll</code> and <code>DDrawCompat-i82stubz.ini</code> into the game folder, next to <code>i82stubz.exe</code>.</li>
   <li>Start the game normally and choose the resolution under Options &rarr; Graphics.</li>
 </ol>
-<p class="note">3840x2160 is only offered when your desktop is at least 3840x2160. To undo everything, delete the four files.</p>
+<p class="note">3840x2160 is only offered when your desktop is at least 3840x2160. To undo everything, delete the three files.</p>
 
 <h2>Longer draw distance (optional)</h2>
 <p>The in-game setting is already at its maximum, but the real clipping and fog distances are stored per level in <code>i82.zfs</code>. Download <code>patch_viewdistance.exe</code> from the <a href="https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest">latest release</a>, put it next to <code>i82.zfs</code> and double-click it. It sets the clipping distance to 3x and the fog to 2x, which removes the fog wall without pop-in and costs no measurable performance.</p>
