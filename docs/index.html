@@ -134,8 +134,8 @@ patch_viewdistance.exe --restore</code></pre>
 <h2>Troubleshooting</h2>
 <h3>"Where is shell dll?" and "Shell Error!" on startup</h3>
 <p>An overlay hooks the game while it starts. RivaTuner Statistics Server (RTSS, part of MSI Afterburner) does this reliably, with or without this patch. Start the game first and RTSS afterwards, or give <code>i82stubz.exe</code> a profile in RTSS with <em>Application detection level</em> set to <strong>None</strong>.</p>
-<h3>Only 4:3 resolutions in the options</h3>
-<p><code>DDrawCompat-i82stubz.ini</code> is missing, renamed, or its <code>SupportedResolutions</code> line was removed. DDrawCompat only accepts 4:3 modes without it.</p>
+<h3>No 1920x1080 or 3840x2160 in the options</h3>
+<p>Check that <code>dinput.dll</code> is in the game folder next to <code>i82stubz.exe</code>: it is what adds the two modes to the game. 3840x2160 is only offered on a desktop of at least 3840x2160. If your display does not report these modes itself, DDrawCompat needs them in the <code>SupportedResolutions</code> line of <code>DDrawCompat-i82stubz.ini</code>, so also check that the profile is there and not renamed.</p>
 <h3>"Unable to set your chosen screen resolution"</h3>
 <p>Usually a leftover <code>i82stubz.exe</code> from an earlier crash still holds the display mode. End it in Task Manager and start the game again.</p>
 <h3>Car stuck in the terrain</h3>
