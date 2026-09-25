@@ -18,7 +18,7 @@ Project page: https://sputnikkaputtnik.github.io/interstate82-widescreen-4k-fix/
 
 - DirectDraw/Direct3D 1-7 presentation through [DDrawCompat](https://github.com/narzoul/DDrawCompat), configured for borderless fullscreen.
 - A mission/level-load crash in the tested GOG build by applying a narrowly targeted heap-compatibility workaround to `i82sim.dll`.
-- Keyboard controls that are dead in missions. DirectInput takes the names of the keyboard, the mouse and every key from Windows' language files, so on a German system it reports "Tastatur", "Maus" and "Leertaste". I82 cannot register its controls with localized names. The menus still work, but every in-mission action "does not exist". The proxy gives I82 empty names for the system keyboard and mouse, and the canonical English DirectInput name for every key, whatever the Windows language.
+- Keyboard controls that are dead in missions. DirectInput takes the names of the keyboard, the mouse and every key from Windows' language files, so on a German system it reports "Tastatur", "Maus" and "Leertaste". I82 finds each bound key by device name and key name, and its default bindings (`bindings.def`, inside `i82.zfs`) use "Keyboard" and English key names. With anything else the menus still work, but every in-mission action "does not exist". The proxy reports the system keyboard and mouse as "Keyboard" and "Mouse", and every key by its canonical English DirectInput name, whatever the Windows language.
 - Modal developer diagnostics from the input system (`CInputBinding::bindControl` and its siblings). One appears between the menu and the load screen on every mission start and has to be dismissed by hand, although it reports a condition a player cannot act on. They are answered automatically and written to `dinput_msgbox.log` instead.
 - The absence of any widescreen resolution. I82 accepts only four hardcoded modes (640x480, 800x600, 1024x768, 1280x1024), so no configuration file can produce a 16:9 frame. The shim widens that filter to offer **1920x1080** in place of 1280x1024, and **3840x2160** in place of 1024x768. The engine itself handles the wider frame correctly: the field of view extends horizontally (Hor+), the HUD moves to the screen edges, and it scales with the resolution.
 
@@ -48,7 +48,7 @@ The shim no longer hardcodes any address inside `i82sim.dll`, but it has only be
 
 5. Start `i82stubz.exe` normally. No DxWnd launcher is required.
 
-Upgrading from v1.2 or earlier: replace `dinput.dll`. The `dinput_orig.dll` that older versions needed can stay or be deleted. If it is there, the shim still uses it.
+Upgrading from an earlier version: replace `dinput.dll` and `DDrawCompat-i82stubz.ini`. If you have edited your profile, keep it and add the line `GdiInterops = none`. The `dinput_orig.dll` that versions before 1.3 needed can stay or be deleted. If it is there, the shim still uses it. Up to v1.3.2 the shim reported the keyboard without a name, so a `bindings.usr` saved from the Controls screen with those versions names its device `""`. On the first start v1.3.3 changes those entries to `"Keyboard"` and keeps the old file as `bindings.usr.before-v1.3.3`. Your key assignments stay as they were.
 
 The included DDrawCompat profile deliberately uses `FullscreenMode = borderless`, not exclusive fullscreen. It was the stable, confirmed mode for this setup.
 
@@ -76,7 +76,7 @@ gcc -O2 -s -o patch_viewdistance.exe patch_viewdistance.c
 - It redirects three groups of imports: `HeapSize`, `HeapReAlloc` and `HeapFree` in `i82sim.dll`; the `LoadLibrary` family in `i82stubz.exe`, so the heap hooks are in place the moment the module is mapped rather than a poll interval later; and `MessageBoxA` in `i82sim.dll` and `I82ShellDll.dll`.
 - The DirectInput hooks change only names: the device names of the system keyboard and mouse, and the names of their keys and buttons. Input itself is untouched.
 - Only popups whose caption begins with `CInput` are suppressed. Everything else is passed through untouched.
-- The only file written is `dinput_msgbox.log`, and only when such a popup is suppressed. There is no telemetry, no registry access and no background diagnostics.
+- The shim writes two files. `dinput_msgbox.log` is written only when such a popup is suppressed. `bindings.usr` is rewritten once, and only if it still has device names left empty by v1.3.2 or earlier; the old file is kept as `bindings.usr.before-v1.3.3`. There is no telemetry, no registry access and no background diagnostics.
 - Remove `dinput.dll`, `ddraw.dll`, `DDrawCompat-i82stubz.ini` and, if an older version left one, `dinput_orig.dll` to revert this method. Restore any files from your backup if they existed before installation.
 
 ## Optional: longer draw distance
@@ -127,6 +127,9 @@ Either start the game first and RTSS afterwards, which works because injecting i
 
 **The video options only offer 4:3 modes.**
 `SupportedResolutions` is missing from the DDrawCompat profile, or the profile is not named after the executable (`DDrawCompat-i82stubz.ini`).
+
+**The keyboard works in the menus but does nothing in a mission, and `dinput_msgbox.log` lists "Control Accelerate does not exist" and the like for every action.**
+Fixed in v1.3.3; update `dinput.dll`. The message is misleading: the action exists, but the key it is bound to does not. I82 looks up each binding by device name and key name, and its default bindings name the device "Keyboard". Up to v1.3.2 the shim reported the keyboard without a name, so on an install without a `bindings.usr` of its own no key was bound. It only worked where every key had been bound again by hand in the Controls screen, which saves the empty name the game saw. v1.3.3 reports the keyboard as "Keyboard" and converts such a saved `bindings.usr` once, as described under [Installation](#installation).
 
 **Crash to the desktop when leaving or restarting a mission.**
 Fixed in v1.3.2: the included `DDrawCompat-i82stubz.ini` now sets `GdiInterops = none`, so update that file. While the game rebuilds its display surfaces, which happens on mission exit and restart, DDrawCompat presents from a copy of the whole virtual desktop. On a large or multi-monitor desktop that copy is big enough that allocating it can fail inside the 32-bit game, and the game then crashes in the graphics driver. The game does not appear to need GDI interop, so it can do without that copy. DDrawCompat's author tracked this down in [narzoul/DDrawCompat#625](https://github.com/narzoul/DDrawCompat/issues/625). In testing on a two-display setup there were no crashes in 36 mission starts and restarts with the setting. Without it, about one in five crashed. On a single display the copy is smaller and the crash is probably rarer, and the setting should not hurt there. Alt+Tab goes through the same path, but was not tested separately with this setting. If Alt+Tab still crashes, see the next entry.

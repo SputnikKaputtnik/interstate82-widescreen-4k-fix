@@ -151,13 +151,12 @@ static const GUID MOUSE={0x6F1D2B60,0xD5A0,0x11CF,{0xBF,0xC7,0x44,0x45,0x53,0x54
  * resources, which Windows keeps in a language file beside the DLL
  * (SysWOW64\<lang>\dinput.dll.mui). Loaded from System32 the real DLL finds
  * that file and hands out localized names: "Tastatur", "Maus", "Leertaste".
- * I82 cannot register its controls with those -- every action then "does not
- * exist" and the keyboard is dead in missions. A renamed copy in the game
- * folder has no language file and returns empty names, which I82 handles.
- * That accident is what made earlier versions work, so the proxy now
- * produces the same result on purpose: empty device names for the system
- * keyboard and mouse, canonical English key names, and empty names for
- * anything unmapped on those two devices. */
+ * I82 finds a bound key by device name and key name: bindings.def (inside
+ * i82.zfs) binds every action to "Keyboard" plus an English key name. With
+ * localized names every action "does not exist" and the keyboard is dead in
+ * missions. So the proxy reports the system keyboard and mouse as "Keyboard"
+ * and "Mouse", canonical English key names, and empty names for anything
+ * unmapped on those two devices. */
 enum { DEV_OTHER=0, DEV_KEYBOARD, DEV_MOUSE };
 static int system_device(const GUID* g){
     if(!memcmp(g,&KBD,sizeof(GUID))) return DEV_KEYBOARD;
@@ -202,15 +201,17 @@ static HRESULT WINAPI Hooked_GetObjectInfo(void* self,LPDIDEVICEOBJECTINSTANCEA 
     if(SUCCEEDED(hr)) override_object_name(obj,device_kind(self));
     return hr;
 }
-static void blank_device_names(LPDIDEVICEINSTANCEA d){
-    if(system_device(&d->guidInstance)!=DEV_OTHER){
-        d->tszInstanceName[0]=0;
-        d->tszProductName[0]=0;
+static void english_device_names(LPDIDEVICEINSTANCEA d){
+    int kind=system_device(&d->guidInstance);
+    if(kind!=DEV_OTHER){
+        const char* name=kind==DEV_KEYBOARD ? "Keyboard" : "Mouse";
+        lstrcpynA(d->tszInstanceName,name,MAX_PATH);
+        lstrcpynA(d->tszProductName,name,MAX_PATH);
     }
 }
 static HRESULT WINAPI Hooked_GetDeviceInfo(void* self,LPDIDEVICEINSTANCEA d){
     HRESULT hr=g_realGetDevInfo(self,d);
-    if(SUCCEEDED(hr) && d) blank_device_names(d);
+    if(SUCCEEDED(hr) && d) english_device_names(d);
     return hr;
 }
 typedef struct { EnumDevCB_t callback; LPVOID ref; } EnumDevContext;
@@ -220,7 +221,7 @@ static BOOL CALLBACK Hooked_EnumDevCallback(LPCDIDEVICEINSTANCEA inst,LPVOID ref
     DWORD n=inst->dwSize<sizeof copy ? inst->dwSize : sizeof copy;
     ZeroMemory(&copy,sizeof copy);
     memcpy(&copy,inst,n);
-    blank_device_names(&copy);
+    english_device_names(&copy);
     return c->callback(&copy,c->ref);
 }
 static HRESULT WINAPI Hooked_EnumDevices(void* self,DWORD type,EnumDevCB_t callback,LPVOID ref,DWORD flags){
@@ -276,7 +277,61 @@ static FARPROC real_proc(const char* name){
     return m ? GetProcAddress(m,name) : NULL;
 }
 
+/* Up to v1.3.2 the proxy reported the keyboard with an empty name, so a
+ * bindings.usr saved from the Controls screen names its device "". With the
+ * keyboard called "Keyboard" again, such a file would bind nothing. Rewrite
+ * those empty device fields once, before the game reads the file, and keep
+ * the old file as bindings.usr.before-v1.3.3. */
+static void mlog(const char* t);
+static void migrate_bindings(void){
+    static const char path[]="bindings.usr";
+    static const char backup[]="bindings.usr.before-v1.3.3";
+    static const char tmp[]="bindings.usr.tmp";
+    HANDLE h=CreateFileA(path,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+    if(h==INVALID_HANDLE_VALUE) return;
+    DWORD size=GetFileSize(h,NULL),got=0;
+    if(size==INVALID_FILE_SIZE || size>0x10000){ CloseHandle(h); return; }
+    HANDLE heap=GetProcessHeap();
+    char* in=(char*)HeapAlloc(heap,0,size+1);
+    DWORD lines=1;
+    if(in && ReadFile(h,in,size,&got,NULL) && got==size){
+        for(DWORD i=0;i<size;i++) if(in[i]=='\n') lines++;
+    }else got=0;
+    CloseHandle(h);
+    char* out=got ? (char*)HeapAlloc(heap,0,size+8*lines) : NULL;
+    DWORD n=0,changed=0;
+    for(DWORD i=0;out && i<size;){
+        DWORD end=i;
+        while(end<size && in[end]!='\n') end++;
+        DWORD quotes=0,device=0;
+        for(DWORD k=i;k<end;k++) if(in[k]=='"' && ++quotes==3) device=k;
+        for(DWORD k=i;k<end && k<size;k++){
+            out[n++]=in[k];
+            if(quotes>=6 && k==device && in[k+1]=='"'){
+                memcpy(out+n,"Keyboard",8); n+=8; changed++;
+            }
+        }
+        if(end<size) out[n++]='\n';
+        i=end+1;
+    }
+    if(changed && CopyFileA(path,backup,TRUE)){
+        HANDLE w=CreateFileA(tmp,GENERIC_WRITE,0,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
+        DWORD put=0;
+        BOOL ok=w!=INVALID_HANDLE_VALUE && WriteFile(w,out,n,&put,NULL) && put==n;
+        if(w!=INVALID_HANDLE_VALUE) CloseHandle(w);
+        if(ok && MoveFileExA(tmp,path,MOVEFILE_REPLACE_EXISTING)){
+            char msg[160];
+            wsprintfA(msg,"[shim] bindings.usr: %lu empty device names set to \"Keyboard\", old file kept as %s\r\n",changed,backup);
+            mlog(msg);
+        }else DeleteFileA(tmp);
+    }
+    if(in) HeapFree(heap,0,in);
+    if(out) HeapFree(heap,0,out);
+}
+
 HRESULT WINAPI DirectInputCreateA(HINSTANCE hinst,DWORD version,LPDIRECTINPUTA* out,LPUNKNOWN outer){
+    static LONG migrated=0;
+    if(!InterlockedExchange(&migrated,1)) migrate_bindings();
     if(!g_realDICreateA){
         g_realDICreateA=(DICreateA_t)real_proc("DirectInputCreateA");
         if(!g_realDICreateA) return E_FAIL;
