@@ -42,7 +42,7 @@ The shim no longer hardcodes any address inside `i82sim.dll`, but it has only be
    - `dinput.dll` → game directory, next to `i82stubz.exe`
    - `DDrawCompat-i82stubz.ini` → game directory, next to `i82stubz.exe`
 
-   The profile's `SupportedResolutions` line is required for widescreen: the game offers 1920x1080 and 3840x2160 once the shim is in place, but DDrawCompat must accept the modes as well, and its default list holds 4:3 modes only. Select the resolution in the game under Options → Video.
+   Select the resolution in the game under Options → Graphics. The profile lists 1920x1080 and 3840x2160 under `SupportedResolutions`. DDrawCompat's default already includes every mode your display reports (`native`), so on most systems the line changes nothing. It keeps both modes available on a display that does not report them, and DDrawCompat then scales them to the desktop.
 
    `dinput.def` is only needed to build the DLL; it does not need to be copied to the game directory.
 
@@ -125,8 +125,8 @@ An overlay is hooking the process as it launches. RivaTuner Statistics Server (R
 
 Either start the game first and RTSS afterwards, which works because injecting into a running process does not disturb it, or give `i82stubz.exe` a profile in RTSS with *Application detection level* set to **None**. Other overlays that inject at process start are worth ruling out the same way. When a startup failure makes no sense, check the Windows application log for a foreign module before suspecting anything else.
 
-**The video options only offer 4:3 modes.**
-`SupportedResolutions` is missing from the DDrawCompat profile, or the profile is not named after the executable (`DDrawCompat-i82stubz.ini`).
+**The graphics options offer neither 1920x1080 nor 3840x2160.**
+The game's own filter allows only its four original modes, and the shim widens it, so check first that `dinput.dll` is in the game folder next to `i82stubz.exe`. 3840x2160 is only offered on a desktop of at least 3840x2160. If your display does not report 1920x1080 or 3840x2160 itself, DDrawCompat offers them only as listed under `SupportedResolutions` in the profile, so also check that the profile is there and named after the executable (`DDrawCompat-i82stubz.ini`).
 
 **The keyboard works in the menus but does nothing in a mission, and `dinput_msgbox.log` lists "Control Accelerate does not exist" and the like for every action.**
 Fixed in v1.3.3; update `dinput.dll`. The message is misleading: the action exists, but the key it is bound to does not. I82 looks up each binding by device name and key name, and its default bindings name the device "Keyboard". Up to v1.3.2 the shim reported the keyboard without a name, so on an install without a `bindings.usr` of its own no key was bound. It only worked where every key had been bound again by hand in the Controls screen, which saves the empty name the game saw. v1.3.3 reports the keyboard as "Keyboard" and converts such a saved `bindings.usr` once, as described under [Installation](#installation).
