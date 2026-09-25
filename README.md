@@ -128,14 +128,17 @@ Either start the game first and RTSS afterwards, which works because injecting i
 **The video options only offer 4:3 modes.**
 `SupportedResolutions` is missing from the DDrawCompat profile, or the profile is not named after the executable (`DDrawCompat-i82stubz.ini`).
 
-**The game crashes to the desktop when you Alt+Tab out, or cars briefly vanish after you come back.**
+**Crash to the desktop when leaving or restarting a mission.**
+Fixed in v1.3.2: the included `DDrawCompat-i82stubz.ini` now sets `GdiInterops = none`, so update that file. While the game rebuilds its display surfaces, which happens on mission exit and restart, DDrawCompat presents from a copy of the whole virtual desktop. On a large or multi-monitor desktop that copy is big enough that allocating it can fail inside the 32-bit game, and the game then crashes in the graphics driver. The game does not appear to need GDI interop, so it can do without that copy. DDrawCompat's author tracked this down in [narzoul/DDrawCompat#625](https://github.com/narzoul/DDrawCompat/issues/625). In testing on a two-display setup there were no crashes in 36 mission starts and restarts with the setting. Without it, about one in five crashed. On a single display the copy is smaller and the crash is probably rarer, and the setting should not hurt there. Alt+Tab goes through the same path, but was not tested separately with this setting. If Alt+Tab still crashes, see the next entry.
+
+**Crash on Alt+Tab, or cars briefly vanish after you Alt+Tab back into the game.**
 Add this line to `DDrawCompat-i82stubz.ini`:
 
 ```ini
 AltTabFix = keepvidmem(1)
 ```
 
-It stops the game from losing its video memory when it goes to the background, so it has nothing to rebuild when it returns. In testing it removed the Alt+Tab crash, which otherwise came within three to five Alt+Tabs in a mission, and cars no longer disappear for a moment afterwards. It is not in the included profile yet because it has only been tested briefly. The crash sits in DDrawCompat's presentation path and is reported upstream as [narzoul/DDrawCompat#625](https://github.com/narzoul/DDrawCompat/issues/625). The same crash can still happen now and then when leaving or restarting a mission.
+It stops the game from losing its video memory when it goes to the background, so it has nothing to rebuild when it returns. Without `GdiInterops = none`, it removed the Alt+Tab crash in testing, which otherwise came within three to five Alt+Tabs in a mission. It is not in the included profile because it has only been tested on one machine.
 
 **"Display Error: Interstate 82 is unable to set your chosen screen resolution" after "Restart Mission", followed by "World Init failed" and a loop of error messages.**
 Fixed in v1.3.1; update `dinput.dll`. "Restart Mission" unloads the game's mission module and loads it again, usually at the same address, and earlier versions sometimes missed that and left the fresh copy at the game's original four resolutions. If you get stuck in the loop on an older version, the dialogs sit behind the fullscreen window: press Ctrl+Alt+Del and end `i82stubz.exe` in Task Manager, or sign out if Task Manager opens behind the game as well.
