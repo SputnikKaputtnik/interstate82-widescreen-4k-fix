@@ -126,8 +126,10 @@ typedef void*  (__cdecl *ov_info_t)(void*,int);
 typedef long   (__cdecl *ov_read_t)(void*,char*,int,int,int,int,int*);
 typedef double (__cdecl *ov_time_total_t)(void*,int);
 typedef int    (__cdecl *ov_clear_t)(void*);
+typedef int    (__cdecl *ov_time_seek_t)(void*,double);
 static ov_fopen_t p_ov_fopen; static ov_info_t p_ov_info; static ov_read_t p_ov_read;
 static ov_time_total_t p_ov_time_total; static ov_clear_t p_ov_clear;
+static ov_time_seek_t p_ov_time_seek;    /* optional */
 #define VF_BYTES 16384                   /* OggVorbis_File is well under 1 KB on 32-bit */
 #define OV_HOLE (-3)
 
@@ -143,6 +145,7 @@ static int load_vorbis(void){
     p_ov_time_total=(ov_time_total_t)(void*)GetProcAddress(m,"ov_time_total");
     p_ov_clear=(ov_clear_t)(void*)GetProcAddress(m,"ov_clear");
     p_ov_read=(ov_read_t)(void*)GetProcAddress(m,"ov_read");
+    p_ov_time_seek=(ov_time_seek_t)(void*)GetProcAddress(m,"ov_time_seek");
     if(!p_ov_fopen || !p_ov_info || !p_ov_time_total || !p_ov_clear || !p_ov_read){ p_ov_read=NULL; return 0; }
     return 1;
 }
@@ -175,6 +178,14 @@ static void scan_tracks(void){
     }
 }
 
+/* the existing track whose span on the virtual CD holds this position (ms) */
+static int track_at(DWORD ms){
+    DWORD s=ms/1000;
+    for(int i=0;i<MAX_TRACKS;i++)
+        if(g_tracks[i].path[0] && s>=g_tracks[i].position && s<g_tracks[i].position+g_tracks[i].length) return i;
+    return -1;
+}
+
 /* ---- player: one thread, one DirectSound stream ------------------------- */
 typedef HRESULT (WINAPI *DSCreate_t)(LPCGUID,LPDIRECTSOUND*,LPUNKNOWN);
 static CRITICAL_SECTION g_cs;
@@ -182,7 +193,14 @@ static HANDLE g_thread=NULL,g_wake=NULL;
 static volatile LONG g_playing=0;        /* what MCI_STATUS_MODE reports */
 static volatile LONG g_volume=100;       /* 0..100 from auxSetVolume */
 static int g_reqFirst=-1,g_reqLast=-1;   /* pending play request */
+static DWORD g_reqOffsetMs=0;            /* where in the first track to start */
 static volatile LONG g_reqSeq=0,g_stopSeq=0;
+/* Where the play cursor is on the virtual CD. The game asks for it (status
+ * position without a track) right after starting a mission's track, stops,
+ * and plays on from there; ogg-winmm answered 0, and "play from 0" fell back
+ * to the first track, so every mission ended up on Track02. */
+static volatile LONG g_curTrack=-1;
+static volatile LONG g_posMs=0;
 
 typedef struct {
     LPDIRECTSOUND ds; LPDIRECTSOUNDBUFFER buf;
@@ -258,22 +276,27 @@ static DWORD WINAPI player_thread(LPVOID arg){
     LONG seenReq=0,seenStop=0;
     int open=0,cur=-1,last=-1,draining=0;
     ULONGLONG endMark=0;
+    DWORD seekMs=0;
+    /* the tracks written to the stream, newest last: where each one's data
+     * starts in the stream, and its position on the virtual CD */
+    struct { int track; ULONGLONG start; DWORD baseMs; } marks[2];
+    int nmarks=0;
     for(;;){
         WaitForSingleObject(g_wake,10);
         EnterCriticalSection(&g_cs);
-        LONG req=g_reqSeq,stop=g_stopSeq; int rf=g_reqFirst,rl=g_reqLast;
+        LONG req=g_reqSeq,stop=g_stopSeq; int rf=g_reqFirst,rl=g_reqLast; DWORD ro=g_reqOffsetMs;
         LeaveCriticalSection(&g_cs);
         if(stop!=seenStop){
             seenStop=stop;
             if(open){ p_ov_clear(vf); open=0; }
-            draining=0; cur=-1;
+            draining=0; cur=-1; nmarks=0;
             if(s.buf) stream_flush(&s);
         }
         if(req!=seenReq){
             seenReq=req;
             if(open){ p_ov_clear(vf); open=0; }
             if(s.buf) stream_flush(&s);
-            cur=rf; last=rl; draining=0;
+            cur=rf; last=rl; draining=0; seekMs=ro; nmarks=0;
         }
         /* open the next track that exists */
         while(!open && cur>=0 && cur<=last){
@@ -286,7 +309,12 @@ static DWORD WINAPI player_thread(LPVOID arg){
                         if(!stream_open(&s,(DWORD)vi[2],(DWORD)vi[1])){ p_ov_clear(vf); cur=-1; break; }
                     }
                     open=1;
-                    WLOG("track %d open: %d Hz, %d ch, stream %s",cur,vi[2],vi[1],s.buf?"ok":"none");
+                    DWORD base=g_tracks[cur].position*1000u;
+                    if(seekMs && p_ov_time_seek && p_ov_time_seek(vf,(int)seekMs/1000.0)==0) base+=seekMs;
+                    seekMs=0;
+                    if(nmarks==2){ marks[0]=marks[1]; nmarks=1; }
+                    marks[nmarks].track=cur; marks[nmarks].start=s.written; marks[nmarks].baseMs=base; nmarks++;
+                    WLOG("track %d open: %d Hz, %d ch, from %lu ms, stream %s",cur,vi[2],vi[1],base,s.buf?"ok":"none");
                     break;
                 }
                 p_ov_clear(vf);
@@ -299,6 +327,14 @@ static DWORD WINAPI player_thread(LPVOID arg){
             continue;
         }
         stream_update(&s);
+        for(int k=nmarks-1;k>=0;k--){
+            if(s.played<marks[k].start) continue;
+            DWORD frames=(DWORD)(s.played-marks[k].start)/s.block;   /* 32-bit maths only */
+            DWORD ms=frames/s.rate*1000u+(frames%s.rate)*1000u/s.rate;
+            InterlockedExchange(&g_curTrack,marks[k].track);
+            InterlockedExchange(&g_posMs,(LONG)(marks[k].baseMs+ms));
+            break;
+        }
         for(;;){
             DWORD ahead=(DWORD)(s.written-s.played);
             if(!open){
@@ -340,10 +376,10 @@ static void start_player(void){
     g_wake=CreateEventA(NULL,FALSE,FALSE,NULL);
     g_thread=CreateThread(NULL,0,player_thread,NULL,0,NULL);
 }
-static void play_tracks(int first,int last){
+static void play_tracks(int first,int last,DWORD offsetMs){
     if(!g_numTracks) return;
     EnterCriticalSection(&g_cs);
-    g_reqFirst=first; g_reqLast=last; g_reqSeq++;
+    g_reqFirst=first; g_reqLast=last; g_reqOffsetMs=offsetMs; g_reqSeq++;
     LeaveCriticalSection(&g_cs);
     InterlockedExchange(&g_playing,1);
     SetEvent(g_wake);
@@ -390,35 +426,44 @@ static MCIERROR mci_command(MCIDEVICEID dev,UINT msg,DWORD_PTR flags,DWORD_PTR p
     if(dev!=MAGIC_DEVICEID && dev!=0 && dev!=0xFFFFFFFF)
         return real_mciSendCommandA(dev,msg,flags,param);
 
-    if(msg==MCI_SET && param && (flags&MCI_SET_TIME_FORMAT))
+    if(msg==MCI_SET && param && (flags&MCI_SET_TIME_FORMAT)){
         g_timeFormat=((LPMCI_SET_PARMS)param)->dwTimeFormat;
+        WLOG("MCI_SET time format %lu",g_timeFormat);
+    }
 
     if(msg==MCI_CLOSE) stop_tracks();
 
     if(msg==MCI_PLAY && param){
         LPMCI_PLAY_PARMS p=(LPMCI_PLAY_PARMS)param;
         static int first=-1,last=-1;
+        DWORD offset=0;
         if(flags&MCI_FROM){
             if(g_timeFormat==MCI_FORMAT_TMSF) first=MCI_TMSF_TRACK(p->dwFrom);
             else if(g_timeFormat==MCI_FORMAT_MILLISECONDS){
-                first=0;
-                for(int i=0;i<MAX_TRACKS;i++) if(g_tracks[i].position==p->dwFrom/1000) first=i;
+                /* the track the position falls into, and how far into it */
+                int t=track_at((DWORD)p->dwFrom);
+                if(t>=0){ first=t; offset=(DWORD)p->dwFrom-g_tracks[t].position*1000u; }
+                else{
+                    first=0;
+                    for(int i=0;i<MAX_TRACKS;i++) if(g_tracks[i].position==p->dwFrom/1000) first=i;
+                }
             }else first=(int)p->dwFrom;
-            if(first<g_firstTrack) first=g_firstTrack;
-            if(first>g_lastTrack) first=g_lastTrack;
+            if(first<g_firstTrack){ first=g_firstTrack; offset=0; }
+            if(first>g_lastTrack){ first=g_lastTrack; offset=0; }
             last=first;
         }
         if(flags&MCI_TO){
             if(g_timeFormat==MCI_FORMAT_TMSF) last=MCI_TMSF_TRACK(p->dwTo);
             else if(g_timeFormat==MCI_FORMAT_MILLISECONDS){
-                last=first;
-                for(int i=first<0?0:first;i<MAX_TRACKS;i++)
-                    if(g_tracks[i].position+g_tracks[i].length>p->dwFrom/1000){ last=i; break; }
+                int t=p->dwTo?track_at((DWORD)p->dwTo-1):-1;
+                last=t>=0?t:first;
             }else last=(int)p->dwTo;
             if(last<first) last=first;
             if(last>g_lastTrack) last=g_lastTrack;
         }
-        if(first!=0 && (flags&MCI_FROM)) play_tracks(first,last);
+        WLOG("MCI_PLAY format %lu from %lu to %lu -> tracks %d..%d at +%lu ms",g_timeFormat,
+             (flags&MCI_FROM)?(DWORD)p->dwFrom:0,(flags&MCI_TO)?(DWORD)p->dwTo:0,first,last,offset);
+        if(first!=0 && (flags&MCI_FROM)) play_tracks(first,last,offset<1000?0:offset);
     }
 
     if(msg==MCI_STOP) stop_tracks();
@@ -435,9 +480,17 @@ static MCIERROR mci_command(MCIDEVICEID dev,UINT msg,DWORD_PTR flags,DWORD_PTR p
                 break; }
             case MCI_STATUS_MEDIA_PRESENT: p->dwReturn=g_lastTrack>0; break;
             case MCI_STATUS_NUMBER_OF_TRACKS: p->dwReturn=g_numTracks; break;
-            case MCI_STATUS_POSITION: if(flags&MCI_TRACK) p->dwReturn=g_tracks[t].position*1000; break;
+            case MCI_STATUS_POSITION:
+                if(flags&MCI_TRACK) p->dwReturn=g_tracks[t].position*1000;
+                else{                                    /* where the play cursor is */
+                    DWORD ms=(DWORD)g_posMs;
+                    p->dwReturn=g_timeFormat==MCI_FORMAT_MILLISECONDS?ms:MCI_MAKE_MSF(ms/60000,ms/1000%60,0);
+                }
+                break;
+            case MCI_STATUS_CURRENT_TRACK: p->dwReturn=g_curTrack>0?(DWORD)g_curTrack:(DWORD)(g_firstTrack>0?g_firstTrack:1); break;
             case MCI_STATUS_MODE: p->dwReturn=g_playing?MCI_MODE_PLAY:MCI_MODE_STOP; break;
             }
+            if(p->dwItem!=MCI_STATUS_MODE) WLOG("MCI_STATUS item %lu track %lu -> %lu",(DWORD)p->dwItem,(DWORD)p->dwTrack,(DWORD)p->dwReturn);
         }
     }
     return 0;
