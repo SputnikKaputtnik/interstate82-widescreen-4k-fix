@@ -11,11 +11,13 @@
  * default. Values sit in fixed-width fields padded with spaces, so each one is
  * rewritten to the same byte length and no offset in the archive moves.
  *
- * The golf course of Instant Action (m02.msa) is the exception: it is so
- * dense with palms that at 3x the player's own car was not drawn at about one
- * level start in eight (7 of 60), apparently because the game then has more
- * objects in view than it can draw. At 2x that never happened (0 of 80), so
- * its clipping is capped at 2x; every other level takes the factor given.
+ * Three Instant Action levels are the exception. On the golf course (Country
+ * Club, m02.msa), which is dense with palms, the player's own car was not
+ * drawn at about one level start in eight at 3x (7 of 60), apparently because
+ * the game then has more objects in view than it can draw; at 2x that never
+ * happened (0 of 80). Area 49 Surface (m12.msa) and Action Mall (m14.msa)
+ * showed the same in play. Their
+ * clipping is capped at 2x; every other level takes the factor given.
  *
  * Before the first change an untouched copy is kept as i82.zfs.original, and
  * every run computes from that copy, so factors never compound. Running it
@@ -50,9 +52,14 @@ static const struct { const char* key; int is_float; int is_clip; } KEYS[] = {
 };
 #define NKEYS (int)(sizeof KEYS / sizeof KEYS[0])
 
-/* the Instant Action golf course, whose clipping is capped (see above) */
-#define GOLF "m02.msa"
-#define GOLF_CLIP_MAX 2.0
+/* Instant Action levels whose clipping is capped (see above) */
+static const struct { const char* file; const char* title; } CAPPED[] = {
+    { "m02.msa", "Country Club" },
+    { "m12.msa", "Area 49 Surface" },
+    { "m14.msa", "Action Mall" },
+};
+#define NCAPPED (int)(sizeof CAPPED / sizeof CAPPED[0])
+#define CAP_CLIP_MAX 2.0
 
 static unsigned rd32(const unsigned char* p)
 {
@@ -150,10 +157,13 @@ static int scale(const unsigned char* src, unsigned char* out, size_t len,
 {
     int changed_total = 0;
     *skipped_total = 0;
-    size_t golf0 = 0, golf1 = 0;
-    int golf = zfs_find(src, len, GOLF, &golf0, &golf1);
-    if (golf && clip > GOLF_CLIP_MAX)
-        printf("    %s (Instant Action golf course): clipping capped at x%g\n", GOLF, GOLF_CLIP_MAX);
+    size_t cap0[NCAPPED], cap1[NCAPPED];
+    int have[NCAPPED];
+    for (int c = 0; c < NCAPPED; c++) {
+        have[c] = zfs_find(src, len, CAPPED[c].file, &cap0[c], &cap1[c]);
+        if (have[c] && clip > CAP_CLIP_MAX)
+            printf("    %s (%s): clipping capped at x%g\n", CAPPED[c].file, CAPPED[c].title, CAP_CLIP_MAX);
+    }
     for (int k = 0; k < NKEYS; k++) {
         const char* key = KEYS[k].key;
         size_t kl = strlen(key);
@@ -189,8 +199,9 @@ static int scale(const unsigned char* src, unsigned char* out, size_t len,
             memcpy(val, src + v0, v1 - v0);
             val[v1 - v0] = 0;
             double f = factor;
-            if (KEYS[k].is_clip && golf && i >= golf0 && i < golf1 && f > GOLF_CLIP_MAX)
-                f = GOLF_CLIP_MAX;
+            if (KEYS[k].is_clip && f > CAP_CLIP_MAX)
+                for (int c = 0; c < NCAPPED; c++)
+                    if (have[c] && i >= cap0[c] && i < cap1[c]) f = CAP_CLIP_MAX;
             double nv = strtod(val, NULL) * f;
             if (KEYS[k].is_float)
                 snprintf(txt, sizeof txt, "%.2f", nv);

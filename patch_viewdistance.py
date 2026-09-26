@@ -21,10 +21,12 @@ On the hardware this was developed against the change cost nothing measurable
 by geometry here. The short view distance was a decision made for 1999
 hardware, not a constraint of the engine.
 
-The golf course of Instant Action (m02.msa) is the exception: it is so dense
-with palms that at 3x the player's own car was not drawn at about one level
-start in eight (7 of 60), apparently because the game then has more objects
-in view than it can draw. At 2x that never happened (0 of 80), so its
+Three Instant Action levels are the exception. On the golf course (Country
+Club, m02.msa), which is dense with palms, the player's own car was not drawn
+at about one level start in eight at 3x (7 of 60), apparently because the
+game then has more objects in view than it can draw; at 2x that never
+happened (0 of 80). Area 49 Surface (m12.msa) and Action Mall (m14.msa)
+showed the same in play. Their
 clipping is capped at 2x; every other level takes the factor given.
 
 The values sit in fixed-width fields padded with trailing spaces, so each one
@@ -58,9 +60,9 @@ DEFAULT_GAMEDIR = r"C:\Program Files (x86)\GOG Galaxy\Games\Interstate 82"
 ARCHIVE = "i82.zfs"
 ORIGINAL = "i82.zfs.original"
 
-# the Instant Action golf course, whose clipping is capped (see above)
-GOLF = b"m02.msa"
-GOLF_CLIP_MAX = 2.0
+# Instant Action levels whose clipping is capped (see above)
+CAPPED = {b"m02.msa": "Country Club", b"m12.msa": "Area 49 Surface", b"m14.msa": "Action Mall"}
+CAP_CLIP_MAX = 2.0
 
 # key -> value is written with two decimals
 KEYS = [
@@ -92,10 +94,13 @@ def zfs_find(data, want):
 
 def scale(data, clip, fog, verbose):
     out = bytearray(data)
-    golf = zfs_find(data, GOLF)
-    if golf and verbose and clip > GOLF_CLIP_MAX:
-        print("    %s (Instant Action golf course): clipping capped at x%g"
-              % (GOLF.decode(), GOLF_CLIP_MAX))
+    capped = []
+    for name, title in CAPPED.items():
+        span = zfs_find(data, name)
+        if span:
+            capped.append(span)
+            if verbose and clip > CAP_CLIP_MAX:
+                print("    %s (%s): clipping capped at x%g" % (name.decode(), title, CAP_CLIP_MAX))
     total_changed = total_skipped = 0
     for key, is_float, which in KEYS:
         factor = clip if which == "clip" else fog
@@ -109,8 +114,8 @@ def scale(data, clip, fog, verbose):
             val, pad = m.group(2), m.group(3)
             field = len(val) + len(pad)
             f = factor
-            if which == "clip" and golf and golf[0] <= m.start() < golf[1]:
-                f = min(factor, GOLF_CLIP_MAX)
+            if which == "clip" and any(a <= m.start() < b for a, b in capped):
+                f = min(factor, CAP_CLIP_MAX)
             new = float(val) * f
             txt = (b"%.2f" % new) if is_float else (b"%d" % int(round(new)))
             if len(txt) > field:

@@ -101,7 +101,7 @@ Clipping_Plane: 200
 
 The two are equal on purpose: the fog is what hides the edge where the world stops being drawn. Raising the clipping plane alone would only move the pop-in into a fog bank, so the tool scales both, with separate factors. Because `Fog_Alpha` is 128 the fog never becomes fully opaque, so geometry past `Fog_Max` still reads as a silhouette — pushing the clipping plane further than the fog adds depth instead of drawing something invisible. Hence the defaults: **clipping 3x, fog 2x**.
 
-One level is capped: the golf course of Instant Action (`m02.msa`) is so dense with palms that at 3x the player's own car was not drawn at about one level start in eight (7 of 60), apparently because the game then has more objects in view than it can draw. At 2x that never happened (0 of 80), so the tool never takes that level past 2x. No other level showed this: the campaign starts L2 to L8 were checked at 3x.
+Three Instant Action levels are capped at 2x. On the golf course (Country Club, `m02.msa`), which is dense with palms, the player's own car was not drawn at about one level start in eight at 3x (7 of 60), apparently because the game then has more objects in view than it can draw; at 2x that never happened (0 of 80). Area 49 Surface (`m12.msa`) and Action Mall (`m14.msa`) showed the same in play. The campaign starts L2 to L8 were checked at 3x without this problem.
 
 On the machine this was developed against it cost nothing measurable — 107 fps at 3840x2160, against 100 before. The engine is not limited by geometry here; the short view distance was a decision for 1999 hardware.
 
