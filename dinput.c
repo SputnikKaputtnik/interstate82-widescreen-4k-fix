@@ -1,8 +1,9 @@
 /* dinput.dll proxy for the GOG release of Interstate '82.
  *
- * This release build keeps the verified heap-compatibility workaround and
- * DirectInput keyboard-name bridge. It contains no logging, UI hooks, or
- * diagnostic threads.
+ * This release build keeps the verified heap-compatibility workaround, the
+ * DirectInput keyboard-name bridge and the widescreen mode filter, and gets
+ * GOG's CD-music replacement playing next to the sound effects (see "CD
+ * music" below).
  *
  * DirectInputCreateA is intercepted only to wrap the system keyboard's
  * EnumObjects/GetObjectInfo calls. I82sim copies DIDEVICEOBJECTINSTANCEA
@@ -712,10 +713,11 @@ static HMODULE music_dll(void){
     return g_oggWinmm;
 }
 /* ---- CD music output through DirectSound -------------------------------
- * Miles plays the sound effects through DirectSound 3D buffers, and on
- * current Windows they fall silent while the music DLL plays through waveOut
- * in the same process -- with or without this shim. They come back when that
- * waveOut stream is swallowed, although the game still sees the CD playing.
+ * Miles plays the sound effects through DirectSound 3D buffers. In testing,
+ * with or without this shim, they could not be heard while the music DLL
+ * played through waveOut in the same process, and they returned when that
+ * stream was swallowed although the game still saw the CD playing. With the
+ * music going through DirectSound as well, both play together.
  * The music DLL uses six waveOut functions and nothing else of the wave API,
  * so in its import table those six are replaced by a small waveOut on top of
  * a DirectSound streaming buffer. It still decodes the tracks itself; only
@@ -849,16 +851,9 @@ static DSWave* dsw_create(LPCWAVEFORMATEX fmt){
     if(w->size<64*w->block) w->size=64*w->block;
     w->lead=w->size/4/w->block*w->block;
     ZeroMemory(&d,sizeof d); d.dwSize=sizeof d;
-    d.dwFlags=DSBCAPS_GETCURRENTPOSITION2|DSBCAPS_GLOBALFOCUS
-#ifdef DSW_ATTEN
-        |DSBCAPS_CTRLVOLUME
-#endif
-        ;
+    d.dwFlags=DSBCAPS_GETCURRENTPOSITION2|DSBCAPS_GLOBALFOCUS;
     d.dwBufferBytes=w->size; d.lpwfxFormat=(LPWAVEFORMATEX)fmt;
     if(FAILED(IDirectSound_CreateSoundBuffer(w->ds,&d,&w->buf,NULL))) goto fail;
-#ifdef DSW_ATTEN
-    IDirectSoundBuffer_SetVolume(w->buf,DSW_ATTEN);
-#endif
     w->fmt=*fmt; w->fmt.cbSize=0;
     w->silence=fmt->wBitsPerSample==8?0x80:0;
     w->magic=DSW_MAGIC;
@@ -879,11 +874,11 @@ fail:
     }
     return NULL;
 }
-/* Starting a new DirectSound stream while Miles is already playing silences
- * its running sounds (the engine loop), although sounds started afterwards
- * are fine. So one stream in the format of the soundtrack (44.1 kHz stereo
- * 16-bit) is opened early, before the first mission, keeps playing silence,
- * and is handed to the music DLL whenever it opens that format. */
+/* The music DLL opens and closes its output for every track and on every
+ * mission restart. One stream in the soundtrack's format (44.1 kHz stereo
+ * 16-bit) is therefore opened once, before the first mission, keeps playing
+ * silence, and is handed to the music DLL whenever it opens that format, so
+ * no DirectSound device is created or torn down while the game plays. */
 static DSWave* volatile g_dswStanding=NULL;
 static volatile LONG g_dswStandingBusy=0;
 static void dsw_open_standing(void){

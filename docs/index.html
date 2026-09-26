@@ -86,7 +86,7 @@ footer { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 20px;
 <header>
   <p class="kicker">Free patch for the GOG version &middot; Windows 10 &amp; 11</p>
   <h1>Interstate '82 in <span>widescreen and 4K</span>, fixed for Windows 11</h1>
-  <p class="lead">Interstate '82 only ever offered 4:3 and 5:4 resolutions and crashes on modern Windows. This patch adds <strong>1920x1080</strong> and <strong>3840x2160</strong> to the game's own video options, fixes the mission-load crash and the broken key binding, and can triple the draw distance.</p>
+  <p class="lead">Interstate '82 only ever offered 4:3 and 5:4 resolutions and crashes on modern Windows. This patch adds <strong>1920x1080</strong> and <strong>3840x2160</strong> to the game's own video options, fixes the start-up hang, the mission-load crash and the broken key binding, gets the soundtrack playing next to the sound effects, and can triple the draw distance.</p>
   <div class="buttons">
     <a class="btn" href="https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest">Download the latest release</a>
     <a class="btn secondary" href="https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix">Source code on GitHub</a>
@@ -104,6 +104,7 @@ footer { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 20px;
   <li><strong>Widescreen and 4K resolutions.</strong> The game accepts exactly four hardcoded modes: 640x480, 800x600, 1024x768 and 1280x1024. The patch widens that filter, so 1920x1080 and 3840x2160 appear under Options &rarr; Graphics. The view extends sideways (Hor+) instead of stretching, the HUD moves to the screen edges and scales with the resolution.</li>
   <li><strong>Mission-load crash fixed.</strong> On Windows 10 and 11 the GOG version can crash while a mission loads. The patch contains a narrowly targeted heap fix for it.</li>
   <li><strong>Key binding fixed.</strong> Modern Windows reports empty or localized DirectInput key names, so the controls screen cannot bind keys and the game complains that controls do not exist. The patch supplies the English key names the game expects.</li>
+  <li><strong>Start-up hang and soundtrack fixed.</strong> On current Windows 11 the GOG version can hang before it opens a window, because of the <code>winmm.dll</code> GOG added to play the soundtrack. Renamed to <code>ogg-winmm.dll</code> it no longer hangs, and the patch plays the music through it, next to the sound effects, which could not be heard while the music played.</li>
   <li><strong>No developer popups.</strong> A diagnostic message box that appears at every mission start is answered automatically.</li>
   <li><strong>Borderless fullscreen</strong> through <a href="https://github.com/narzoul/DDrawCompat">DDrawCompat</a>. No DxWnd, no launcher: start the game as usual.</li>
 </ul>
@@ -121,9 +122,10 @@ footer { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 20px;
   <li>Download <code>dinput.dll</code> and <code>DDrawCompat-i82stubz.ini</code> from the <a href="https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest">latest release</a>. <code>SHA256SUMS.txt</code> in the same release lets you verify them.</li>
   <li>Download <a href="https://github.com/narzoul/DDrawCompat/releases">DDrawCompat</a> and take its <code>ddraw.dll</code>.</li>
   <li>Put <code>dinput.dll</code>, <code>ddraw.dll</code> and <code>DDrawCompat-i82stubz.ini</code> into the game folder, next to <code>i82stubz.exe</code>.</li>
+  <li>In the game folder, rename GOG's <code>winmm.dll</code> to <code>ogg-winmm.dll</code>.</li>
   <li>Start the game normally and choose the resolution under Options &rarr; Graphics.</li>
 </ol>
-<p class="note">3840x2160 is only offered when your desktop is at least 3840x2160. To undo everything, delete the three files.</p>
+<p class="note">3840x2160 is only offered when your desktop is at least 3840x2160. To undo everything, delete the three files and rename <code>ogg-winmm.dll</code> back to <code>winmm.dll</code>.</p>
 
 <h2>Longer draw distance (optional)</h2>
 <p>The in-game setting is already at its maximum, but the real clipping and fog distances are stored per level in <code>i82.zfs</code>. Download <code>patch_viewdistance.exe</code> from the <a href="https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest">latest release</a>, put it next to <code>i82.zfs</code> and double-click it. It sets the clipping distance to 3x and the fog to 2x, which removes the fog wall without pop-in and costs no measurable performance.</p>
@@ -132,6 +134,8 @@ footer { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 20px;
 patch_viewdistance.exe --restore</code></pre>
 
 <h2>Troubleshooting</h2>
+<h3>The game does not start at all</h3>
+<p>No window, no error, but <code>i82stubz.exe</code> is in Task Manager: GOG's <code>winmm.dll</code> is still in the game folder under its own name. End every <code>i82stubz.exe</code> in Task Manager and rename <code>winmm.dll</code> to <code>ogg-winmm.dll</code>. "Verify / Repair" in GOG Galaxy puts it back, so rename it again after that.</p>
 <h3>"Where is shell dll?" and "Shell Error!" on startup</h3>
 <p>An overlay hooks the game while it starts. RivaTuner Statistics Server (RTSS, part of MSI Afterburner) does this reliably, with or without this patch. Start the game first and RTSS afterwards, or give <code>i82stubz.exe</code> a profile in RTSS with <em>Application detection level</em> set to <strong>None</strong>.</p>
 <h3>No 1920x1080 or 3840x2160 in the options</h3>

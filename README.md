@@ -6,7 +6,7 @@ Interstate '82 was built for 4:3 and 5:4 monitors: it offers exactly four resolu
 
 4K measured around 100 fps on an RTX 4070 Ti where 1080p reached 240, so it costs roughly what the extra pixels are worth and nothing more.
 
-It also fixes the crashes and input problems that stop the game on modern Windows, and removes the need for DxWnd's visible launcher. It does **not** contain any game files, nor a copy of DDrawCompat.
+It also fixes the crashes, the start-up hang and the input problems that stop the game on modern Windows, gets GOG's CD soundtrack playing next to the sound effects, and removes the need for DxWnd's visible launcher. It does **not** contain any game files, nor a copy of DDrawCompat.
 
 Tested on Windows 11 with an NVIDIA RTX 4070 Ti.
 
@@ -19,6 +19,8 @@ Project page: https://sputnikkaputtnik.github.io/interstate82-widescreen-4k-fix/
 - DirectDraw/Direct3D 1-7 presentation through [DDrawCompat](https://github.com/narzoul/DDrawCompat), configured for borderless fullscreen.
 - A mission/level-load crash in the tested GOG build by applying a narrowly targeted heap-compatibility workaround to `i82sim.dll`.
 - Keyboard controls that are dead in missions. DirectInput takes the names of the keyboard, the mouse and every key from Windows' language files, so on a German system it reports "Tastatur", "Maus" and "Leertaste". I82 finds each bound key by device name and key name, and its default bindings (`bindings.def`, inside `i82.zfs`) use "Keyboard" and English key names. With anything else the menus still work, but every in-mission action "does not exist". The proxy reports the system keyboard and mouse as "Keyboard" and "Mouse", and every key by its canonical English DirectInput name, whatever the Windows language.
+- A game that never opens a window on current Windows 11. GOG's `winmm.dll`, which plays the soundtrack, passes most calls on to Windows' own `winmm.dll` through the relative path `system32\\winmm`, and on recent builds (seen on 10.0.26200) resolving that path hangs before the game's first line of code runs. Renamed to `ogg-winmm.dll`, the file no longer stands in for Windows' `winmm.dll`, and the shim loads it itself for the music.
+- A soundtrack that is silent on many systems, and sound effects that cannot be heard while it plays. Where Windows applies compatibility fixes to `i82stubz.exe`, the game gets Windows' `winmm.dll` and GOG's music DLL is never used. Where the music DLL does play, it streams through waveOut, and in testing the effects, which Miles plays through DirectSound, could not be heard next to it. The shim loads GOG's music DLL, points the game's CD-audio calls at it, and moves its output to DirectSound.
 - Modal developer diagnostics from the input system (`CInputBinding::bindControl` and its siblings). One appears between the menu and the load screen on every mission start and has to be dismissed by hand, although it reports a condition a player cannot act on. They are answered automatically and written to `dinput_msgbox.log` instead.
 - The absence of any widescreen resolution. I82 accepts only four hardcoded modes (640x480, 800x600, 1024x768, 1280x1024), so no configuration file can produce a 16:9 frame. The shim widens that filter to offer **1920x1080** in place of 1280x1024, and **3840x2160** in place of 1024x768. The engine itself handles the wider frame correctly: the field of view extends horizontally (Hor+), the HUD moves to the screen edges, and it scales with the resolution.
 
@@ -46,9 +48,10 @@ The shim no longer hardcodes any address inside `i82sim.dll`, but it has only be
 
    `dinput.def` is only needed to build the DLL; it does not need to be copied to the game directory.
 
-5. Start `i82stubz.exe` normally. No DxWnd launcher is required.
+5. In the game directory, rename GOG's `winmm.dll` to `ogg-winmm.dll`. It plays the soundtrack, and under its own name it would make the game hang at start on current Windows 11 (see [What it fixes](#what-it-fixes)). The shim finds it under the new name.
+6. Start `i82stubz.exe` normally. No DxWnd launcher is required.
 
-Upgrading from an earlier version: replace `dinput.dll` and `DDrawCompat-i82stubz.ini`. If you have edited your profile, keep it and add the line `GdiInterops = none`. The `dinput_orig.dll` that versions before 1.3 needed can stay or be deleted. If it is there, the shim still uses it. Up to v1.3.2 the shim reported the keyboard without a name, so a `bindings.usr` saved from the Controls screen with those versions names its device `""`. On the first start v1.3.3 changes those entries to `"Keyboard"` and keeps the old file as `bindings.usr.before-v1.3.3`. Your key assignments stay as they were.
+Upgrading from an earlier version: replace `dinput.dll` and `DDrawCompat-i82stubz.ini`, and rename `winmm.dll` to `ogg-winmm.dll` (step 5). If you have edited your profile, keep it and add the line `GdiInterops = none`. The `dinput_orig.dll` that versions before 1.3 needed can stay or be deleted. If it is there, the shim still uses it. Up to v1.3.2 the shim reported the keyboard without a name, so a `bindings.usr` saved from the Controls screen with those versions names its device `""`. On the first start v1.3.3 changes those entries to `"Keyboard"` and keeps the old file as `bindings.usr.before-v1.3.3`. Your key assignments stay as they were.
 
 The included DDrawCompat profile deliberately uses `FullscreenMode = borderless`, not exclusive fullscreen. It was the stable, confirmed mode for this setup.
 
@@ -76,8 +79,9 @@ gcc -O2 -s -o patch_viewdistance.exe patch_viewdistance.c
 - It redirects three groups of imports: `HeapSize`, `HeapReAlloc` and `HeapFree` in `i82sim.dll`; the `LoadLibrary` family in `i82stubz.exe`, so the heap hooks are in place the moment the module is mapped rather than a poll interval later; and `MessageBoxA` in `i82sim.dll` and `I82ShellDll.dll`.
 - The DirectInput hooks change only names: the device names of the system keyboard and mouse, and the names of their keys and buttons. Input itself is untouched.
 - Only popups whose caption begins with `CInput` are suppressed. Everything else is passed through untouched.
+- For the soundtrack it loads GOG's music DLL from the game directory (`ogg-winmm.dll`, or `winmm.dll` if the game is already using Windows' own), points the imports of `mciSendCommandA`, `mciSendStringA` and the four `aux` volume functions in `mss32.dll` and `I82ShellDll.dll` at it, and serves that DLL's six `waveOut` imports from a DirectSound stream. If the game already uses GOG's DLL as its `winmm.dll`, only that output is moved.
 - The shim writes two files. `dinput_msgbox.log` is written only when such a popup is suppressed. `bindings.usr` is rewritten once, and only if it still has device names left empty by v1.3.2 or earlier; the old file is kept as `bindings.usr.before-v1.3.3`. There is no telemetry, no registry access and no background diagnostics.
-- Remove `dinput.dll`, `ddraw.dll`, `DDrawCompat-i82stubz.ini` and, if an older version left one, `dinput_orig.dll` to revert this method. Restore any files from your backup if they existed before installation.
+- Remove `dinput.dll`, `ddraw.dll`, `DDrawCompat-i82stubz.ini` and, if an older version left one, `dinput_orig.dll`, and rename `ogg-winmm.dll` back to `winmm.dll` to revert this method. Restore any files from your backup if they existed before installation.
 
 ## Optional: longer draw distance
 
@@ -119,6 +123,12 @@ Either way, it edits your installed `i82.zfs`. Before the first change it keeps 
 The tool ships no game data and redistributes nothing; it changes files you already own.
 
 ## Troubleshooting
+
+**The game does not start: no window and no error, but `i82stubz.exe` is in Task Manager.**
+GOG's `winmm.dll` is in the game directory under its own name. End every `i82stubz.exe` in Task Manager, since each attempt adds another hung process, then rename `winmm.dll` to `ogg-winmm.dll` (Installation, step 5). "Verify / Repair" in GOG Galaxy puts `winmm.dll` back, so rename it again after that. If both files are there, delete `winmm.dll`.
+
+**No music, or no sound effects while the music plays.**
+Fixed in v1.4; update `dinput.dll`. The music needs GOG's music DLL (`ogg-winmm.dll`), `libvorbisfile-3.dll`, `libvorbis-0.dll`, `libogg-0.dll` and the `MUSIC` folder in the game directory, all part of the GOG installation.
 
 **"Where is shell dll?" followed by "Shell Error!" on startup, and the game quits.**
 An overlay is hooking the process as it launches. RivaTuner Statistics Server (RTSS, shipped with MSI Afterburner) does this reliably: with RTSS already running, the game dies before its menu module is ever loaded — first with an access violation in `RTSSHooks.dll` in the Windows application log, later with no crash entry at all, because the game bails out through its own error path first. It happens with any `dinput.dll`, including none, so it is easy to mistake for a problem with this shim.
