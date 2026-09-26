@@ -72,6 +72,27 @@ a { color: var(--accent2); }
 figure { margin: 24px 0; }
 figure img { width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); display: block; }
 figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; }
+.carousel { position: relative; margin: 24px 0; }
+.carousel .track {
+  display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth;
+  scrollbar-width: none; border-radius: 8px;
+}
+.carousel .track::-webkit-scrollbar { display: none; }
+.carousel figure { flex: 0 0 100%; margin: 0; scroll-snap-align: center; }
+.carousel figure img { aspect-ratio: 16 / 9; object-fit: cover; }
+.carousel .nav {
+  position: absolute; top: calc(50% - 34px); width: 40px; height: 40px; border-radius: 50%;
+  border: 1px solid var(--line); background: rgba(13, 11, 20, .7); color: var(--text);
+  font-size: 22px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.carousel .nav:hover, .carousel .nav:focus-visible { background: var(--accent); border-color: var(--accent); outline: none; }
+.carousel .prev { left: 10px; }
+.carousel .next { right: 10px; }
+.carousel .dots { display: flex; justify-content: center; gap: 8px; margin-top: 10px; }
+.carousel .dots button {
+  width: 10px; height: 10px; padding: 0; border-radius: 50%; border: 0; background: var(--line); cursor: pointer;
+}
+.carousel .dots button[aria-current="true"] { background: var(--accent); }
 code { background: var(--code); padding: 1px 6px; border-radius: 4px; font-size: .92em; }
 pre { background: var(--code); padding: 14px 16px; border-radius: 8px; overflow-x: auto; font-size: 14px; }
 pre code { background: none; padding: 0; }
@@ -86,9 +107,29 @@ footer { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 20px;
 <header>
   <p class="kicker">Free patch for the GOG version &middot; Windows 10 &amp; 11</p>
   <h1>Interstate '82 in <span>widescreen and 4K</span>, fixed for Windows 11</h1>
-  <figure>
-    <img src="ingame-vegas-4k-action.webp" width="2000" height="1125" alt="Interstate '82 in 16:9 at 3840x2160: the player's car fires twin lasers at an enemy car on a neon-lit Las Vegas street at night">
-  </figure>
+  <section class="carousel" aria-roledescription="carousel" aria-label="In-game screenshots">
+    <div class="track" tabindex="0">
+      <figure id="shot-1" aria-label="1 of 4">
+        <img src="ingame-vegas-4k-action.webp" width="2000" height="1125" alt="Interstate '82 in 16:9 at 3840x2160: the player's car fires twin lasers at an enemy car on a neon-lit Las Vegas street at night">
+        <figcaption>Vegas, Baby (Instant Action) at night</figcaption>
+      </figure>
+      <figure id="shot-2" aria-label="2 of 4">
+        <img src="ingame-ambush-4k-day.webp" width="2000" height="1125" loading="lazy" alt="Interstate '82 at 3840x2160 with the longer draw distance: a mountain road through pine hills, an enemy hot rod closing in from the right">
+        <figcaption>Ambush! (campaign) with the longer draw distance</figcaption>
+      </figure>
+      <figure id="shot-3" aria-label="3 of 4">
+        <img src="ingame-golf-4k.webp" width="2000" height="1125" loading="lazy" alt="Interstate '82 at 3840x2160: the player's car fires across a golf course with palms, a clubhouse and mountains behind">
+        <figcaption>Golf Party (Instant Action)</figcaption>
+      </figure>
+      <figure id="shot-4" aria-label="4 of 4">
+        <img src="ingame-area49-4k-sunset.webp" width="2000" height="1125" loading="lazy" alt="Interstate '82 at 3840x2160: twin lasers across a desert airfield at sunset, a stealth bomber and a radar dish in the background">
+        <figcaption>Bad Area (Instant Action) at Area 49</figcaption>
+      </figure>
+    </div>
+    <button class="nav prev" type="button" aria-label="Previous screenshot">&#8249;</button>
+    <button class="nav next" type="button" aria-label="Next screenshot">&#8250;</button>
+    <div class="dots"></div>
+  </section>
   <p class="lead">Interstate '82 only ever offered 4:3 and 5:4 resolutions and crashes on modern Windows. This patch adds <strong>1920x1080</strong> and <strong>3840x2160</strong> to the game's own video options, fixes the start-up hang, the mission-load crash and the broken key binding, gets the soundtrack playing next to the sound effects, and can triple the draw distance.</p>
   <div class="buttons">
     <a class="btn" href="https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest">Download the latest release</a>
@@ -159,5 +200,32 @@ patch_viewdistance.exe --restore</code></pre>
 </footer>
 
 </main>
+<script>
+(function () {
+  var c = document.querySelector(".carousel");
+  if (!c) return;
+  var track = c.querySelector(".track"), slides = track.querySelectorAll("figure"), dots = c.querySelector(".dots");
+  function current() { return Math.round(track.scrollLeft / track.clientWidth); }
+  function go(i) { i = (i + slides.length) % slides.length; track.scrollTo({ left: i * track.clientWidth }); }
+  slides.forEach(function (s, i) {
+    var b = document.createElement("button");
+    b.type = "button"; b.setAttribute("aria-label", "Screenshot " + (i + 1));
+    b.addEventListener("click", function () { go(i); });
+    dots.appendChild(b);
+  });
+  function mark() {
+    var i = current();
+    dots.querySelectorAll("button").forEach(function (b, j) { b.setAttribute("aria-current", i === j ? "true" : "false"); });
+  }
+  c.querySelector(".prev").addEventListener("click", function () { go(current() - 1); });
+  c.querySelector(".next").addEventListener("click", function () { go(current() + 1); });
+  track.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowLeft") { e.preventDefault(); go(current() - 1); }
+    if (e.key === "ArrowRight") { e.preventDefault(); go(current() + 1); }
+  });
+  track.addEventListener("scroll", function () { window.requestAnimationFrame(mark); });
+  mark();
+})();
+</script>
 </body>
 </html>
