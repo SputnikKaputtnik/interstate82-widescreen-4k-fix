@@ -1032,11 +1032,14 @@ static void music_through_dsound(HMODULE ogg){
         *real[i]=(void*)GetProcAddress(sys,t[i].fn);
         if(!*real[i]) return;
     }
+    int hooked=0;
     for(int i=0;i<6;i++){
         void* old=IATHookByName(ogg,"winmm.dll",t[i].fn,t[i].repl);
-        if(old) *real[i]=old;
+        if(old){ *real[i]=old; hooked=1; }
     }
-    dsw_open_standing();
+    /* only GOG's DLL plays through waveOut; the winmm.dll of this patch uses
+     * DirectSound itself and has no such imports */
+    if(hooked) dsw_open_standing();
 }
 
 static void route_cd_audio(const char* mod){
