@@ -21,6 +21,14 @@ On the hardware this was developed against the change cost nothing measurable
 by geometry here. The short view distance was a decision made for 1999
 hardware, not a constraint of the engine.
 
+Three Instant Action levels are the exception. On the golf course (Country
+Club, m02.msa), which is dense with palms, the player's own car was not drawn
+at about one level start in eight at 3x (7 of 60), apparently because the
+game then has more objects in view than it can draw; at 2x that never
+happened (0 of 80). Area 49 Surface (m12.msa) and Action Mall (m14.msa)
+showed the same in play. Their
+clipping is capped at 2x; every other level takes the factor given.
+
 The values sit in fixed-width fields padded with trailing spaces, so each one
 is rewritten to the same byte length. Every offset in the archive directory
 stays valid and the file does not need repacking. A field that cannot hold its
@@ -45,11 +53,16 @@ import argparse
 import os
 import re
 import shutil
+import struct
 import sys
 
 DEFAULT_GAMEDIR = r"C:\Program Files (x86)\GOG Galaxy\Games\Interstate 82"
 ARCHIVE = "i82.zfs"
 ORIGINAL = "i82.zfs.original"
+
+# Instant Action levels whose clipping is capped (see above)
+CAPPED = {b"m02.msa": "Country Club", b"m12.msa": "Area 49 Surface", b"m14.msa": "Action Mall"}
+CAP_CLIP_MAX = 2.0
 
 # key -> value is written with two decimals
 KEYS = [
@@ -60,8 +73,34 @@ KEYS = [
 ]
 
 
+def zfs_find(data, want):
+    """(start, end) of a file inside the ZFS3 archive, or None."""
+    if data[:4] != b"ZFS3" or len(data) < 0x1C:
+        return None
+    namelen, per_block = struct.unpack_from("<II", data, 8)
+    blk = struct.unpack_from("<I", data, 0x18)[0]
+    esize = namelen + 20
+    seen = set()
+    while blk and blk not in seen and blk + 4 + per_block * esize <= len(data):
+        seen.add(blk)
+        for i in range(per_block):
+            e = blk + 4 + i * esize
+            if data[e:e + namelen].split(b"\0")[0].lower() == want:
+                off, _, size = struct.unpack_from("<III", data, e + namelen)
+                return off, off + size
+        blk = struct.unpack_from("<I", data, blk)[0]
+    return None
+
+
 def scale(data, clip, fog, verbose):
     out = bytearray(data)
+    capped = []
+    for name, title in CAPPED.items():
+        span = zfs_find(data, name)
+        if span:
+            capped.append(span)
+            if verbose and clip > CAP_CLIP_MAX:
+                print("    %s (%s): clipping capped at x%g" % (name.decode(), title, CAP_CLIP_MAX))
     total_changed = total_skipped = 0
     for key, is_float, which in KEYS:
         factor = clip if which == "clip" else fog
@@ -74,7 +113,10 @@ def scale(data, clip, fog, verbose):
         for m in pat.finditer(bytes(data)):
             val, pad = m.group(2), m.group(3)
             field = len(val) + len(pad)
-            new = float(val) * factor
+            f = factor
+            if which == "clip" and any(a <= m.start() < b for a, b in capped):
+                f = min(factor, CAP_CLIP_MAX)
+            new = float(val) * f
             txt = (b"%.2f" % new) if is_float else (b"%d" % int(round(new)))
             if len(txt) > field:
                 skipped += 1
