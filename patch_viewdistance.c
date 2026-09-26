@@ -11,12 +11,12 @@
  * default. Values sit in fixed-width fields padded with spaces, so each one is
  * rewritten to the same byte length and no offset in the archive moves.
  *
- * Three Instant Action levels are the exception. On the golf course (Country
+ * Four levels are the exception. On the golf course (Country
  * Club, m02.msa), which is dense with palms, the player's own car was not
  * drawn at about one level start in eight at 3x (7 of 60), apparently because
  * the game then has more objects in view than it can draw; at 2x that never
- * happened (0 of 80). Area 49 Surface (m12.msa) and Action Mall (m14.msa)
- * showed the same in play. Their
+ * happened (0 of 80). Area 49 Surface (m12.msa), Action Mall (m14.msa) and
+ * the first training level (a01.msa) showed the same in play. Their
  * clipping is capped at 2x; every other level takes the factor given.
  *
  * Before the first change an untouched copy is kept as i82.zfs.original, and
@@ -57,6 +57,7 @@ static const struct { const char* file; const char* title; } CAPPED[] = {
     { "m02.msa", "Country Club" },
     { "m12.msa", "Area 49 Surface" },
     { "m14.msa", "Action Mall" },
+    { "a01.msa", "Training 1" },
 };
 #define NCAPPED (int)(sizeof CAPPED / sizeof CAPPED[0])
 #define CAP_CLIP_MAX 2.0
