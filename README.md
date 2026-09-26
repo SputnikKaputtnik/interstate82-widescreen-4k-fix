@@ -101,6 +101,8 @@ Clipping_Plane: 200
 
 The two are equal on purpose: the fog is what hides the edge where the world stops being drawn. Raising the clipping plane alone would only move the pop-in into a fog bank, so the tool scales both, with separate factors. Because `Fog_Alpha` is 128 the fog never becomes fully opaque, so geometry past `Fog_Max` still reads as a silhouette — pushing the clipping plane further than the fog adds depth instead of drawing something invisible. Hence the defaults: **clipping 3x, fog 2x**.
 
+One level is capped: the golf course of Instant Action (`m02.msa`) is so dense with palms that at 3x the player's own car was not drawn at about one level start in eight (7 of 60), apparently because the game then has more objects in view than it can draw. At 2x that never happened (0 of 80), so the tool never takes that level past 2x. No other level showed this: the campaign starts L2 to L8 were checked at 3x.
+
 On the machine this was developed against it cost nothing measurable — 107 fps at 3840x2160, against 100 before. The engine is not limited by geometry here; the short view distance was a decision for 1999 hardware.
 
 **The simple way:** download `patch_viewdistance.exe` from the [latest release](https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest), put it in the game folder next to `i82.zfs`, and double-click it. It applies clipping 3x and fog 2x and shows what it changed. Double-clicking it again offers to put the original draw distance back. You can also drop `i82.zfs` onto it wherever the program is. Windows may warn about an unrecognized program the first time, because the exe is not code-signed; the source is `patch_viewdistance.c` in this repository.

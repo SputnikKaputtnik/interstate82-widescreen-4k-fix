@@ -11,6 +11,12 @@
  * default. Values sit in fixed-width fields padded with spaces, so each one is
  * rewritten to the same byte length and no offset in the archive moves.
  *
+ * The golf course of Instant Action (m02.msa) is the exception: it is so
+ * dense with palms that at 3x the player's own car was not drawn at about one
+ * level start in eight (7 of 60), apparently because the game then has more
+ * objects in view than it can draw. At 2x that never happened (0 of 80), so
+ * its clipping is capped at 2x; every other level takes the factor given.
+ *
  * Before the first change an untouched copy is kept as i82.zfs.original, and
  * every run computes from that copy, so factors never compound. Running it
  * again on a patched archive offers to restore the original.
@@ -43,6 +49,40 @@ static const struct { const char* key; int is_float; int is_clip; } KEYS[] = {
     { "Underground_Fog_Max",        1, 0 },
 };
 #define NKEYS (int)(sizeof KEYS / sizeof KEYS[0])
+
+/* the Instant Action golf course, whose clipping is capped (see above) */
+#define GOLF "m02.msa"
+#define GOLF_CLIP_MAX 2.0
+
+static unsigned rd32(const unsigned char* p)
+{
+    return p[0] | p[1] << 8 | p[2] << 16 | (unsigned)p[3] << 24;
+}
+
+/* Where a file lies inside the ZFS3 archive: 1 and [*start,*end) if found. */
+static int zfs_find(const unsigned char* d, size_t len, const char* want,
+                    size_t* start, size_t* end)
+{
+    if (len < 0x1C || memcmp(d, "ZFS3", 4)) return 0;
+    size_t namelen = rd32(d + 8), per_block = rd32(d + 12), esize = namelen + 20;
+    size_t blk = rd32(d + 0x18);
+    for (int guard = 0; blk && guard < 10000; guard++) {
+        if (namelen == 0 || namelen > 64 || blk + 4 + per_block * esize > len) return 0;
+        for (size_t i = 0; i < per_block; i++) {
+            const unsigned char* e = d + blk + 4 + i * esize;
+            char name[65];
+            memcpy(name, e, namelen);
+            name[namelen] = 0;
+            if (!_stricmp(name, want)) {
+                *start = rd32(e + namelen);
+                *end = *start + rd32(e + namelen + 8);
+                return 1;
+            }
+        }
+        blk = rd32(d + blk);
+    }
+    return 0;
+}
 
 static int g_interactive;   /* started from Explorer: keep the window open */
 
@@ -110,6 +150,10 @@ static int scale(const unsigned char* src, unsigned char* out, size_t len,
 {
     int changed_total = 0;
     *skipped_total = 0;
+    size_t golf0 = 0, golf1 = 0;
+    int golf = zfs_find(src, len, GOLF, &golf0, &golf1);
+    if (golf && clip > GOLF_CLIP_MAX)
+        printf("    %s (Instant Action golf course): clipping capped at x%g\n", GOLF, GOLF_CLIP_MAX);
     for (int k = 0; k < NKEYS; k++) {
         const char* key = KEYS[k].key;
         size_t kl = strlen(key);
@@ -144,7 +188,10 @@ static int scale(const unsigned char* src, unsigned char* out, size_t len,
             if (v1 - v0 >= sizeof val) { skipped++; continue; }
             memcpy(val, src + v0, v1 - v0);
             val[v1 - v0] = 0;
-            double nv = strtod(val, NULL) * factor;
+            double f = factor;
+            if (KEYS[k].is_clip && golf && i >= golf0 && i < golf1 && f > GOLF_CLIP_MAX)
+                f = GOLF_CLIP_MAX;
+            double nv = strtod(val, NULL) * f;
             if (KEYS[k].is_float)
                 snprintf(txt, sizeof txt, "%.2f", nv);
             else
