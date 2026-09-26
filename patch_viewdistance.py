@@ -21,12 +21,12 @@ On the hardware this was developed against the change cost nothing measurable
 by geometry here. The short view distance was a decision made for 1999
 hardware, not a constraint of the engine.
 
-Three Instant Action levels are the exception. On the golf course (Country
+Four levels are the exception. On the golf course (Country
 Club, m02.msa), which is dense with palms, the player's own car was not drawn
 at about one level start in eight at 3x (7 of 60), apparently because the
 game then has more objects in view than it can draw; at 2x that never
-happened (0 of 80). Area 49 Surface (m12.msa) and Action Mall (m14.msa)
-showed the same in play. Their
+happened (0 of 80). Area 49 Surface (m12.msa), Action Mall (m14.msa) and
+the first training level (a01.msa) showed the same in play. Their
 clipping is capped at 2x; every other level takes the factor given.
 
 The values sit in fixed-width fields padded with trailing spaces, so each one
@@ -61,7 +61,8 @@ ARCHIVE = "i82.zfs"
 ORIGINAL = "i82.zfs.original"
 
 # Instant Action levels whose clipping is capped (see above)
-CAPPED = {b"m02.msa": "Country Club", b"m12.msa": "Area 49 Surface", b"m14.msa": "Action Mall"}
+CAPPED = {b"m02.msa": "Country Club", b"m12.msa": "Area 49 Surface", b"m14.msa": "Action Mall",
+          b"a01.msa": "Training 1"}
 CAP_CLIP_MAX = 2.0
 
 # key -> value is written with two decimals
