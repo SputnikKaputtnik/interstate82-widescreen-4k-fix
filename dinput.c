@@ -1,8 +1,9 @@
 /* dinput.dll proxy for the GOG release of Interstate '82.
  *
- * This release build keeps the verified heap-compatibility workaround and
- * DirectInput keyboard-name bridge. It contains no logging, UI hooks, or
- * diagnostic threads.
+ * This release build keeps the verified heap-compatibility workaround, the
+ * DirectInput keyboard-name bridge and the widescreen mode filter, and gets
+ * GOG's CD-music replacement playing next to the sound effects (see "CD
+ * music" below).
  *
  * DirectInputCreateA is intercepted only to wrap the system keyboard's
  * EnumObjects/GetObjectInfo calls. I82sim copies DIDEVICEOBJECTINSTANCEA
@@ -22,6 +23,8 @@
 #include <windows.h>
 #include <dinput.h>
 #include <string.h>
+#define COBJMACROS
+#include <dsound.h>
 
 /* ---- safe memory probing ---------------------------------------------- */
 static int readable(const void* p,SIZE_T n){
@@ -647,6 +650,409 @@ static void widen_display_modes(void){
     widen_module("I82ShellDll.dll",1);
 }
 
+/* ---- CD music: route the CD calls to GOG's ogg-winmm ------------------
+ * The GOG release plays its soundtrack through its own winmm.dll next to the
+ * game ("ogg-winmm virtual CD"): it answers the cdaudio MCI commands and plays
+ * MUSIC\TrackNN.ogg. That only works if the game loads that file as its
+ * winmm. When Windows applies compatibility shims to i82stubz.exe, AcLayers
+ * and AcGenral bring in the system winmm.dll before the game starts, every
+ * module then binds to that one, and the music is silently missing.
+ *
+ * The music DLL implements only six functions itself and forwards the rest.
+ * Loaded by full path next to the system winmm, it becomes a separate module
+ * whose own imports bind to the system DLL, and later imports of winmm.dll
+ * keep getting the system one. So when the loaded winmm is not the one in the
+ * game folder, load the game folder's copy (or ogg-winmm.dll, if it has been
+ * renamed to keep the game off it) and point those six imports of the two
+ * modules that play CD audio at it: mss32.dll (Miles' redbook functions, in
+ * missions) and I82ShellDll.dll. Like the heap hooks this is idempotent, and
+ * a module the game loads again gets patched again. */
+static const char* const g_cdFuncs[]={"mciSendCommandA","mciSendStringA",
+    "auxGetDevCapsA","auxGetNumDevs","auxGetVolume","auxSetVolume"};
+#define CD_FUNCS (sizeof g_cdFuncs/sizeof g_cdFuncs[0])
+static HMODULE g_sysWinmm=NULL;
+static HMODULE g_oggWinmm=NULL;         /* loaded by us next to the system one */
+static HMODULE g_oggPrimary=NULL;       /* the game's own winmm is the music DLL */
+static volatile LONG g_oggState=0;       /* 0 not yet, 1 loading, 2 settled */
+
+static DWORD game_dir(char* dir,DWORD cap){
+    DWORD n=GetModuleFileNameA(NULL,dir,cap);
+    if(!n || n>=cap) return 0;
+    while(n && dir[n-1]!='\\') n--;
+    dir[n]=0;                            /* keeps the trailing backslash */
+    return n;
+}
+static HMODULE music_dll(void){
+    if(g_oggState==2) return g_oggWinmm;
+    HMODULE sys=GetModuleHandleA("winmm.dll");
+    if(!sys) return NULL;                /* nothing plays CD audio yet */
+    if(InterlockedCompareExchange(&g_oggState,1,0)!=0) return NULL;
+    char dir[MAX_PATH],loaded[MAX_PATH],path[MAX_PATH];
+    DWORD n=game_dir(dir,MAX_PATH);
+    DWORD m=GetModuleFileNameA(sys,loaded,MAX_PATH);
+    /* the loaded winmm sits directly in the game folder: the game already
+     * plays its music through it */
+    int game_own=n && m>n && m<MAX_PATH
+        && CompareStringA(LOCALE_INVARIANT,NORM_IGNORECASE,loaded,n,dir,n)==CSTR_EQUAL;
+    for(DWORD k=n;game_own && k<m;k++) if(loaded[k]=='\\') game_own=0;
+    if(game_own) g_oggPrimary=sys;
+    if(n && !game_own){
+        static const char* const names[]={"winmm.dll","ogg-winmm.dll"};
+        for(unsigned i=0;i<2 && !g_oggWinmm;i++){
+            if(n+lstrlenA(names[i])>=MAX_PATH) break;
+            lstrcpyA(path,dir); lstrcatA(path,names[i]);
+            if(GetFileAttributesA(path)==INVALID_FILE_ATTRIBUTES) continue;
+            HMODULE o=LoadLibraryExA(path,NULL,LOAD_WITH_ALTERED_SEARCH_PATH);
+            if(!o) continue;
+            FARPROC mine=GetProcAddress(o,"mciSendCommandA");
+            if(o!=sys && mine && mine!=GetProcAddress(sys,"mciSendCommandA")){ g_sysWinmm=sys; g_oggWinmm=o; }
+            else FreeLibrary(o);
+        }
+    }
+    InterlockedExchange(&g_oggState,2);
+    return g_oggWinmm;
+}
+/* ---- CD music output through DirectSound -------------------------------
+ * Miles plays the sound effects through DirectSound 3D buffers. In testing,
+ * with or without this shim, they could not be heard while the music DLL
+ * played through waveOut in the same process, and they returned when that
+ * stream was swallowed although the game still saw the CD playing. With the
+ * music going through DirectSound as well, both play together.
+ * The music DLL uses six waveOut functions and nothing else of the wave API,
+ * so in its import table those six are replaced by a small waveOut on top of
+ * a DirectSound streaming buffer. It still decodes the tracks itself; only
+ * the output moves to the API the effects use. If DirectSound cannot be set
+ * up, the calls go to the waveOut the DLL was bound to, as before. */
+#define DSW_MAGIC 0x57534431u
+typedef MMRESULT (WINAPI *wOpen_t)(LPHWAVEOUT,UINT,LPCWAVEFORMATEX,DWORD_PTR,DWORD_PTR,DWORD);
+typedef MMRESULT (WINAPI *wHdr_t)(HWAVEOUT,LPWAVEHDR,UINT);
+typedef MMRESULT (WINAPI *wH_t)(HWAVEOUT);
+typedef HRESULT (WINAPI *DSCreate_t)(LPCGUID,LPDIRECTSOUND*,LPUNKNOWN);
+static wOpen_t g_rwOpen=NULL;
+static wHdr_t  g_rwPrep=NULL,g_rwUnprep=NULL,g_rwWrite=NULL;
+static wH_t    g_rwReset=NULL,g_rwClose=NULL;
+
+typedef struct DSNode { struct DSNode* next; WAVEHDR* h; DWORD copied; int full; ULONGLONG end; } DSNode;
+typedef struct {
+    DWORD magic;
+    LPDIRECTSOUND ds; LPDIRECTSOUNDBUFFER buf;
+    DWORD size,block,lead;               /* ring bytes, bytes per frame, bytes kept ahead */
+    int silence;                         /* fill byte: 0x80 for 8-bit, 0 for 16-bit */
+    CRITICAL_SECTION cs; HANDLE thread,wake; volatile LONG quit;
+    DSNode *head,*tail;                  /* queued headers, oldest first */
+    ULONGLONG written,played;            /* running byte counts */
+    DWORD wpos,lastPlay;                 /* ring offsets: next write, last play cursor */
+    DWORD_PTR cb,inst; DWORD cbType;
+    WAVEFORMATEX fmt;
+} DSWave;
+
+static void dsw_notify(DSWave* w,UINT msg,WAVEHDR* h){
+    UINT mm=msg==WOM_DONE?MM_WOM_DONE:msg==WOM_OPEN?MM_WOM_OPEN:MM_WOM_CLOSE;
+    switch(w->cbType){
+    case CALLBACK_FUNCTION:
+        ((void (CALLBACK*)(HWAVEOUT,UINT,DWORD_PTR,DWORD_PTR,DWORD_PTR))w->cb)((HWAVEOUT)w,msg,w->inst,(DWORD_PTR)h,0);
+        break;
+    case CALLBACK_WINDOW: PostMessageA((HWND)w->cb,mm,(WPARAM)w,(LPARAM)h); break;
+    case CALLBACK_THREAD: PostThreadMessageA((DWORD)w->cb,mm,(WPARAM)w,(LPARAM)h); break;
+    case CALLBACK_EVENT:  SetEvent((HANDLE)w->cb); break;
+    }
+}
+/* Write n bytes (silence when src is NULL) into the ring at the write count. */
+static void dsw_put(DSWave* w,const BYTE* src,DWORD n){
+    void *p1,*p2; DWORD n1,n2;
+    if(!n || FAILED(IDirectSoundBuffer_Lock(w->buf,w->wpos,n,&p1,&n1,&p2,&n2,0))) return;
+    if(src){ memcpy(p1,src,n1); if(p2) memcpy(p2,src+n1,n2); }
+    else   { memset(p1,w->silence,n1); if(p2) memset(p2,w->silence,n2); }
+    IDirectSoundBuffer_Unlock(w->buf,p1,n1,p2,n2);
+    w->written+=n1+n2;
+    w->wpos=(w->wpos+n1+n2)%w->size;
+}
+static void dsw_done(DSWave* w,DSNode* list){
+    while(list){
+        DSNode* next=list->next;
+        dsw_notify(w,WOM_DONE,list->h);
+        HeapFree(GetProcessHeap(),0,list);
+        list=next;
+    }
+}
+static DWORD WINAPI dsw_thread(LPVOID arg){
+    DSWave* w=(DSWave*)arg;
+    while(!w->quit){
+        WaitForSingleObject(w->wake,10);
+        DSNode *done=NULL,**dtail=&done;
+        EnterCriticalSection(&w->cs);
+        DWORD play=0,wc=0;
+        if(SUCCEEDED(IDirectSoundBuffer_GetCurrentPosition(w->buf,&play,&wc))){
+            w->played+=(play+w->size-w->lastPlay)%w->size; w->lastPlay=play;
+            if(w->played>w->written){ w->written=w->played; w->wpos=play; }   /* underrun: go on at the cursor */
+        }
+        /* a header is done once its last byte has been played */
+        while(w->head && w->head->full && w->head->end<=w->played){
+            DSNode* n=w->head; w->head=n->next; if(!w->head) w->tail=NULL;
+            n->h->dwFlags=(n->h->dwFlags&~WHDR_INQUEUE)|WHDR_DONE;
+            n->next=NULL; *dtail=n; dtail=&n->next;
+        }
+        /* fill the ring with queued data; silence only so stale audio never repeats */
+        for(;;){
+            DWORD ahead=(DWORD)(w->written-w->played);
+            DSNode* n=w->head;
+            while(n && n->full) n=n->next;
+            if(!n){
+                if(ahead<w->lead) dsw_put(w,NULL,(w->lead-ahead)/w->block*w->block);
+                break;
+            }
+            DWORD room=(w->size-w->block-ahead)/w->block*w->block;
+            DWORD left=n->h->dwBufferLength-n->copied;
+            DWORD k=left<room?left:room;
+            if(!k) break;
+            dsw_put(w,(const BYTE*)n->h->lpData+n->copied,k);
+            n->copied+=k;
+            if(n->copied<n->h->dwBufferLength) break;
+            n->full=1; n->end=w->written;
+        }
+        LeaveCriticalSection(&w->cs);
+        dsw_done(w,done);
+    }
+    return 0;
+}
+typedef struct { DWORD pid; HWND found; } WinSearch;
+static BOOL CALLBACK dsw_enum(HWND h,LPARAM p){
+    WinSearch* s=(WinSearch*)p; DWORD pid=0;
+    GetWindowThreadProcessId(h,&pid);
+    if(pid==s->pid && IsWindowVisible(h)){ s->found=h; return FALSE; }
+    return TRUE;
+}
+static HWND dsw_window(void){
+    WinSearch s={GetCurrentProcessId(),NULL};
+    EnumWindows(dsw_enum,(LPARAM)&s);
+    return s.found?s.found:GetDesktopWindow();
+}
+#ifdef DSW_DEBUG
+static void dswlog(const char* what,const WAVEFORMATEX* f,const void* w){
+    char b[160];
+    wsprintfA(b,"%lu %s rate=%lu ch=%u bits=%u -> %p\r\n",GetTickCount(),what,
+        f?f->nSamplesPerSec:0,f?f->nChannels:0,f?f->wBitsPerSample:0,w);
+    logto("dsw_debug.log",b);
+}
+#else
+#define dswlog(what,f,w) ((void)0)
+#endif
+/* A DirectSound stream playing silence until data is queued. */
+static DSWave* dsw_create(LPCWAVEFORMATEX fmt){
+    HMODULE m=LoadLibraryA("dsound.dll");
+    DSCreate_t create=m?(DSCreate_t)GetProcAddress(m,"DirectSoundCreate"):NULL;
+    DSWave* w=(DSWave*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof *w);
+    DSBUFFERDESC d;
+    if(!create || !w) goto fail;
+    if(FAILED(create(NULL,&w->ds,NULL))) goto fail;
+    if(FAILED(IDirectSound_SetCooperativeLevel(w->ds,dsw_window(),DSSCL_NORMAL))) goto fail;
+    w->block=fmt->nBlockAlign;
+    w->size=fmt->nAvgBytesPerSec/w->block*w->block;                 /* one second */
+    if(w->size<64*w->block) w->size=64*w->block;
+    w->lead=w->size/4/w->block*w->block;
+    ZeroMemory(&d,sizeof d); d.dwSize=sizeof d;
+    d.dwFlags=DSBCAPS_GETCURRENTPOSITION2|DSBCAPS_GLOBALFOCUS;
+    d.dwBufferBytes=w->size; d.lpwfxFormat=(LPWAVEFORMATEX)fmt;
+    if(FAILED(IDirectSound_CreateSoundBuffer(w->ds,&d,&w->buf,NULL))) goto fail;
+    w->fmt=*fmt; w->fmt.cbSize=0;
+    w->silence=fmt->wBitsPerSample==8?0x80:0;
+    w->magic=DSW_MAGIC;
+    InitializeCriticalSection(&w->cs);
+    w->wake=CreateEventA(NULL,FALSE,FALSE,NULL);
+    dsw_put(w,NULL,w->size);                                        /* start from silence */
+    w->written=0; w->wpos=0; w->lastPlay=0;
+    IDirectSoundBuffer_SetCurrentPosition(w->buf,0);
+    IDirectSoundBuffer_Play(w->buf,0,0,DSBPLAY_LOOPING);
+    w->thread=CreateThread(NULL,0,dsw_thread,w,0,NULL);
+    if(!w->thread){ IDirectSoundBuffer_Stop(w->buf); DeleteCriticalSection(&w->cs); CloseHandle(w->wake); w->magic=0; goto fail; }
+    return w;
+fail:
+    if(w){
+        if(w->buf) IDirectSoundBuffer_Release(w->buf);
+        if(w->ds) IDirectSound_Release(w->ds);
+        HeapFree(GetProcessHeap(),0,w);
+    }
+    return NULL;
+}
+/* The music DLL opens and closes its output for every track and on every
+ * mission restart. One stream in the soundtrack's format (44.1 kHz stereo
+ * 16-bit) is therefore opened once, before the first mission, keeps playing
+ * silence, and is handed to the music DLL whenever it opens that format, so
+ * no DirectSound device is created or torn down while the game plays. */
+static DSWave* volatile g_dswStanding=NULL;
+static volatile LONG g_dswStandingBusy=0;
+static void dsw_open_standing(void){
+    static volatile LONG tried=0;
+    if(InterlockedExchange(&tried,1)) return;
+    WAVEFORMATEX f; ZeroMemory(&f,sizeof f);
+    f.wFormatTag=WAVE_FORMAT_PCM; f.nChannels=2; f.nSamplesPerSec=44100; f.wBitsPerSample=16;
+    f.nBlockAlign=4; f.nAvgBytesPerSec=44100*4;
+    g_dswStanding=dsw_create(&f);
+    dswlog("standing stream",&f,g_dswStanding);
+}
+static int same_format(const WAVEFORMATEX* a,const WAVEFORMATEX* b){
+    return a->nChannels==b->nChannels && a->nSamplesPerSec==b->nSamplesPerSec
+        && a->wBitsPerSample==b->wBitsPerSample && a->nBlockAlign==b->nBlockAlign;
+}
+static MMRESULT WINAPI DSW_waveOutOpen(LPHWAVEOUT ph,UINT dev,LPCWAVEFORMATEX fmt,DWORD_PTR cb,DWORD_PTR inst,DWORD fl){
+    if(!fmt || fmt->wFormatTag!=WAVE_FORMAT_PCM || !fmt->nBlockAlign || !fmt->nAvgBytesPerSec || (fl&WAVE_FORMAT_QUERY))
+        return g_rwOpen(ph,dev,fmt,cb,inst,fl);
+    DSWave* w=g_dswStanding;
+    if(w && same_format(&w->fmt,fmt) && !InterlockedExchange(&g_dswStandingBusy,1)){
+        EnterCriticalSection(&w->cs);
+        w->cb=cb; w->inst=inst; w->cbType=fl&CALLBACK_TYPEMASK;
+        LeaveCriticalSection(&w->cs);
+        dswlog("open (standing)",fmt,w);
+    }else{
+        w=dsw_create(fmt);
+        dswlog("open (new)",fmt,w);
+        if(!w) return g_rwOpen(ph,dev,fmt,cb,inst,fl);
+        w->cb=cb; w->inst=inst; w->cbType=fl&CALLBACK_TYPEMASK;
+    }
+    if(ph) *ph=(HWAVEOUT)w;
+    dsw_notify(w,WOM_OPEN,NULL);
+    return MMSYSERR_NOERROR;
+}
+static DSWave* dsw(HWAVEOUT h){
+    DSWave* w=(DSWave*)h;
+    return (w && readable(w,sizeof(DWORD)) && w->magic==DSW_MAGIC)?w:NULL;
+}
+static MMRESULT WINAPI DSW_waveOutPrepareHeader(HWAVEOUT h,LPWAVEHDR hdr,UINT n){
+    if(!dsw(h)) return g_rwPrep(h,hdr,n);
+    if(!hdr) return MMSYSERR_INVALPARAM;
+    hdr->dwFlags|=WHDR_PREPARED;
+    return MMSYSERR_NOERROR;
+}
+static MMRESULT WINAPI DSW_waveOutUnprepareHeader(HWAVEOUT h,LPWAVEHDR hdr,UINT n){
+    if(!dsw(h)) return g_rwUnprep(h,hdr,n);
+    if(!hdr) return MMSYSERR_INVALPARAM;
+    if(hdr->dwFlags&WHDR_INQUEUE) return WAVERR_STILLPLAYING;
+    hdr->dwFlags&=~WHDR_PREPARED;
+    return MMSYSERR_NOERROR;
+}
+static MMRESULT WINAPI DSW_waveOutWrite(HWAVEOUT h,LPWAVEHDR hdr,UINT n){
+    DSWave* w=dsw(h);
+    if(!w) return g_rwWrite(h,hdr,n);
+    if(!hdr) return MMSYSERR_INVALPARAM;
+    if(!(hdr->dwFlags&WHDR_PREPARED)) return WAVERR_UNPREPARED;
+    DSNode* node=(DSNode*)HeapAlloc(GetProcessHeap(),HEAP_ZERO_MEMORY,sizeof *node);
+    if(!node) return MMSYSERR_NOMEM;
+    node->h=hdr;
+    EnterCriticalSection(&w->cs);
+    hdr->dwFlags=(hdr->dwFlags&~WHDR_DONE)|WHDR_INQUEUE;
+    if(w->tail) w->tail->next=node; else w->head=node;
+    w->tail=node;
+    LeaveCriticalSection(&w->cs);
+    SetEvent(w->wake);
+    return MMSYSERR_NOERROR;
+}
+static MMRESULT WINAPI DSW_waveOutReset(HWAVEOUT h){
+    DSWave* w=dsw(h);
+    if(!w) return g_rwReset(h);
+    EnterCriticalSection(&w->cs);
+    DSNode* done=w->head; w->head=w->tail=NULL;
+    for(DSNode* n=done;n;n=n->next) n->h->dwFlags=(n->h->dwFlags&~WHDR_INQUEUE)|WHDR_DONE;
+    IDirectSoundBuffer_Stop(w->buf);
+    dsw_put(w,NULL,w->size);                                        /* clear the whole ring */
+    { DWORD play=0,wc=0; IDirectSoundBuffer_GetCurrentPosition(w->buf,&play,&wc);
+      w->played+=(play+w->size-w->lastPlay)%w->size; w->lastPlay=play; w->wpos=play; }
+    w->written=w->played;
+    IDirectSoundBuffer_Play(w->buf,0,0,DSBPLAY_LOOPING);
+    LeaveCriticalSection(&w->cs);
+    dsw_done(w,done);
+    return MMSYSERR_NOERROR;
+}
+static MMRESULT WINAPI DSW_waveOutClose(HWAVEOUT h){
+    DSWave* w=dsw(h);
+    if(!w) return g_rwClose(h);
+    if(w->head) return WAVERR_STILLPLAYING;
+    if(w==g_dswStanding){                /* keep it running for the next track */
+        dsw_notify(w,WOM_CLOSE,NULL);
+        EnterCriticalSection(&w->cs);
+        w->cb=0; w->inst=0; w->cbType=CALLBACK_NULL;
+        LeaveCriticalSection(&w->cs);
+        dswlog("close (standing kept)",&w->fmt,w);
+        InterlockedExchange(&g_dswStandingBusy,0);
+        return MMSYSERR_NOERROR;
+    }
+    w->quit=1; SetEvent(w->wake);
+    WaitForSingleObject(w->thread,2000);
+    CloseHandle(w->thread); CloseHandle(w->wake);
+    IDirectSoundBuffer_Stop(w->buf);
+    IDirectSoundBuffer_Release(w->buf);
+    IDirectSound_Release(w->ds);
+    dsw_notify(w,WOM_CLOSE,NULL);
+    w->magic=0;
+    DeleteCriticalSection(&w->cs);
+    HeapFree(GetProcessHeap(),0,w);
+    return MMSYSERR_NOERROR;
+}
+/* Point one import of mod, found by name, at repl; returns the old target. */
+static void* IATHookByName(HMODULE mod,const char* dll,const char* fn,void* repl){
+    BYTE* base=(BYTE*)mod; IMAGE_DOS_HEADER* dos=(IMAGE_DOS_HEADER*)base;
+    if(dos->e_magic!=IMAGE_DOS_SIGNATURE) return NULL;
+    IMAGE_NT_HEADERS* nt=(IMAGE_NT_HEADERS*)(base+dos->e_lfanew);
+    IMAGE_DATA_DIRECTORY dir=nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if(!dir.VirtualAddress) return NULL;
+    for(IMAGE_IMPORT_DESCRIPTOR* d=(IMAGE_IMPORT_DESCRIPTOR*)(base+dir.VirtualAddress);d->Name;d++){
+        if(lstrcmpiA((const char*)base+d->Name,dll) || !d->OriginalFirstThunk) continue;
+        IMAGE_THUNK_DATA* ft=(IMAGE_THUNK_DATA*)(base+d->FirstThunk);
+        IMAGE_THUNK_DATA* ot=(IMAGE_THUNK_DATA*)(base+d->OriginalFirstThunk);
+        for(;ot->u1.AddressOfData;ot++,ft++){
+            if(IMAGE_SNAP_BY_ORDINAL(ot->u1.Ordinal)) continue;
+            IMAGE_IMPORT_BY_NAME* n=(IMAGE_IMPORT_BY_NAME*)(base+ot->u1.AddressOfData);
+            if(lstrcmpA((const char*)n->Name,fn)) continue;
+            void* old=(void*)ft->u1.Function; DWORD op;
+            if(old==repl) return NULL;
+            if(!VirtualProtect(&ft->u1.Function,sizeof(void*),PAGE_READWRITE,&op)) return NULL;
+            ft->u1.Function=(DWORD_PTR)repl;
+            VirtualProtect(&ft->u1.Function,sizeof(void*),op,&op);
+            return old;
+        }
+    }
+    return NULL;
+}
+/* Move the music DLL's output to DirectSound. The waveOut it was bound to
+ * stays the fallback: the system one, or winmmsys.dll in a patched copy. */
+static void music_through_dsound(HMODULE ogg){
+    static HMODULE volatile done=NULL;
+    if(!ogg || InterlockedCompareExchangePointer((PVOID volatile*)&done,ogg,NULL)!=NULL) return;
+    static const struct { const char* fn; void* repl; } t[6]={
+        {"waveOutOpen",(void*)DSW_waveOutOpen},
+        {"waveOutPrepareHeader",(void*)DSW_waveOutPrepareHeader},
+        {"waveOutUnprepareHeader",(void*)DSW_waveOutUnprepareHeader},
+        {"waveOutWrite",(void*)DSW_waveOutWrite},
+        {"waveOutReset",(void*)DSW_waveOutReset},
+        {"waveOutClose",(void*)DSW_waveOutClose}};
+    void** real[6]={(void**)&g_rwOpen,(void**)&g_rwPrep,(void**)&g_rwUnprep,
+                    (void**)&g_rwWrite,(void**)&g_rwReset,(void**)&g_rwClose};
+    /* the fallbacks must be in place before the first call can arrive */
+    HMODULE sys=g_sysWinmm?g_sysWinmm:GetModuleHandleA("winmm.dll");
+    for(int i=0;i<6;i++){
+        *real[i]=(void*)GetProcAddress(sys,t[i].fn);
+        if(!*real[i]) return;
+    }
+    for(int i=0;i<6;i++){
+        void* old=IATHookByName(ogg,"winmm.dll",t[i].fn,t[i].repl);
+        if(old) *real[i]=old;
+    }
+    dsw_open_standing();
+}
+
+static void route_cd_audio(const char* mod){
+    HMODULE m=NULL;
+    if(!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,mod,&m) || !m) return;
+    HMODULE ogg=music_dll();
+    if(g_oggPrimary) music_through_dsound(g_oggPrimary);
+    if(!ogg) return;
+    music_through_dsound(ogg);
+    for(unsigned i=0;i<CD_FUNCS;i++){
+        FARPROC from=GetProcAddress(g_sysWinmm,g_cdFuncs[i]);
+        FARPROC to=GetProcAddress(ogg,g_cdFuncs[i]);
+        if(from && to && from!=to) IATHookByAddr(m,(void*)from,(void*)to);
+    }
+}
+
 /* Applying the heap hooks is idempotent: IATHookByAddr only matches the
  * untouched API address, so a second pass over an already-patched table
  * changes nothing. That lets both the loader hook and the backstop poll call
@@ -656,6 +1062,8 @@ static void install_heap_hooks(void){
     hook_messagebox("i82sim.dll");      /* both are no-ops while unloaded */
     hook_messagebox("I82ShellDll.dll");
     widen_display_modes();
+    route_cd_audio("mss32.dll");
+    route_cd_audio("I82ShellDll.dll");
     HMODULE s=NULL;
     if(!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                            "i82sim.dll",&s) || !s){ g_i82Base=NULL; return; }
