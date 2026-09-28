@@ -1,15 +1,25 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="13" fill="#0d0b14"/>
-  <g fill="none" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round">
-    <g stroke="#37d6ff" transform="translate(2.2 1.8)">
-      <rect x="10" y="10" width="16" height="17" rx="8"/>
-      <rect x="9" y="27" width="18" height="23" rx="9"/>
-      <path d="M36 18c0-5 4-8 9-8s9 3 9 8c0 5-4 9-8 13L36 50h19"/>
-    </g>
-    <g stroke="#ff4fa3">
-      <rect x="10" y="10" width="16" height="17" rx="8"/>
-      <rect x="9" y="27" width="18" height="23" rx="9"/>
-      <path d="M36 18c0-5 4-8 9-8s9 3 9 8c0 5-4 9-8 13L36 50h19"/>
-    </g>
+  <defs>
+    <radialGradient id="fire" cx="62%" cy="58%" r="70%">
+      <stop offset="0" stop-color="#ffb43a"/>
+      <stop offset=".35" stop-color="#f06414"/>
+      <stop offset=".7" stop-color="#8e1c08"/>
+      <stop offset="1" stop-color="#1c0a06"/>
+    </radialGradient>
+    <linearGradient id="chrome" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset=".42" stop-color="#b9c0c8"/>
+      <stop offset=".5" stop-color="#6d7682"/>
+      <stop offset=".58" stop-color="#e4e7ea"/>
+      <stop offset="1" stop-color="#8a929c"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="12" fill="url(#fire)"/>
+  <g transform="translate(6.8 0) skewX(-12)" stroke="#140c08" stroke-width="1.6" stroke-linejoin="round">
+    <path fill="url(#chrome)" fill-rule="evenodd"
+      d="M13 15h14a8 8 0 0 1 8 8v18a8 8 0 0 1-8 8H13a8 8 0 0 1-8-8V23a8 8 0 0 1 8-8Z
+         M12 23.5h16v3H12Z M12 37.5h16v3H12Z"/>
+    <path fill="url(#chrome)"
+      d="M37 15h17a6 6 0 0 1 6 6v12a4 4 0 0 1-4 4H45v3.5h15V49H36V36a4 4 0 0 1 4-4h11v-8.5H37Z"/>
   </g>
 </svg>
