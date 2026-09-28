@@ -174,11 +174,11 @@ This project was made with an AI coding assistant, [Claude](https://claude.com/c
 - the automated test runs, which start the game, click through the menus, measure level starts and take the screenshots;
 - this README, the project page, the release notes and most comments in issues.
 
-The maintainer sets the goals and plays the game on real hardware. That covers the checks no script can do, such as listening for music and sound effects or spotting a missing car. The maintainer also decides the trade-offs, for example 3x draw distance with four levels held at 2x, and approves every merge, release and post. Each release ships the exact binaries that were tested.
+The maintainer (SputnikKaputtnik) sets the goals and plays the game on real hardware. That covers the checks no script can do, such as listening for music and sound effects or spotting a missing car. The maintainer also decides the trade-offs, for example 3x draw distance with four levels held at 2x, and approves every merge, release and post. Each release ships the exact binaries that were tested.
 
 Commits written with the assistant carry a `Co-Authored-By: Claude` line. Posts under the maintainer's account, here and on other sites, are usually drafted with it as well.
 
-For you this means: the source is complete and short enough to read, and the behaviour described here was tested on the maintainer's machine. No second human developer has reviewed it. Bug reports and reviews are welcome.
+For you this means: the source is complete and short enough to read, and the behaviour described here was tested on the maintainer's two Windows 11 PCs, a gaming machine with a dedicated GPU and a laptop. No second human developer has reviewed it. Bug reports and reviews are welcome.
 
 ## Credits
 
