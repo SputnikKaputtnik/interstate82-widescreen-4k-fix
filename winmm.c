@@ -407,8 +407,11 @@ static HWND game_window(void){
 static MCIERROR mci_command(MCIDEVICEID dev,UINT msg,DWORD_PTR flags,DWORD_PTR param);
 MCIERROR WINAPI i82_mciSendCommandA(MCIDEVICEID dev,UINT msg,DWORD_PTR flags,DWORD_PTR param){
     MCIERROR r=mci_command(dev,msg,flags,param);
-    WLOG("mciSendCommandA dev=%u msg=0x%x flags=0x%lx -> %lu%s",dev,msg,(DWORD)flags,r,
-         (msg==MCI_STATUS&&param)?" (status)":"");
+#ifdef WINMM_DEBUG
+    { char from[MAX_PATH+32]; where(from,__builtin_return_address(0));
+    WLOG("mciSendCommandA dev=%u msg=0x%x flags=0x%lx -> %lu%s from %s",dev,msg,(DWORD)flags,r,
+         (msg==MCI_STATUS&&param)?" (status)":"",from); }
+#endif
     return r;
 }
 static MCIERROR mci_command(MCIDEVICEID dev,UINT msg,DWORD_PTR flags,DWORD_PTR param){
@@ -528,9 +531,10 @@ MCIERROR WINAPI i82_mciSendStringA(LPCSTR cmd,LPSTR ret,UINT n,HWND cb){
 }
 
 /* ---- aux: one virtual CD device carrying the music volume --------------- */
-UINT WINAPI i82_auxGetNumDevs(void){ return 1; }
+UINT WINAPI i82_auxGetNumDevs(void){ WLOG("auxGetNumDevs"); return 1; }
 MMRESULT WINAPI i82_auxGetDevCapsA(UINT_PTR dev,LPAUXCAPSA caps,UINT cb){
     (void)dev;
+    WLOG("auxGetDevCapsA %u cb=%u",(UINT)dev,cb);
     if(!caps || cb<sizeof(AUXCAPSA)) return MMSYSERR_INVALPARAM;
     ZeroMemory(caps,sizeof *caps);
     caps->wMid=2; caps->wPid=401; caps->vDriverVersion=1;           /* MM_CREATIVE, CD aux */
@@ -540,6 +544,7 @@ MMRESULT WINAPI i82_auxGetDevCapsA(UINT_PTR dev,LPAUXCAPSA caps,UINT cb){
 }
 MMRESULT WINAPI i82_auxGetVolume(UINT dev,LPDWORD vol){
     (void)dev;
+    WLOG("auxGetVolume");
     if(vol) *vol=0;
     return MMSYSERR_NOERROR;
 }
@@ -548,6 +553,23 @@ MMRESULT WINAPI i82_auxSetVolume(UINT dev,DWORD vol){
     InterlockedExchange(&g_volume,(LONG)(LOWORD(vol)*100u/65535u));
     WLOG("auxSetVolume 0x%08lx -> %ld",vol,g_volume);
     return MMSYSERR_NOERROR;
+}
+
+/* Miles looks for the CD volume on the mixers first and uses the aux devices
+ * only if no mixer has a compact-disc source line. Some audio drivers still
+ * report one, and Miles then sets the music volume on that line, which has
+ * nothing to do with our stream: the music plays at full volume whatever the
+ * slider says. So the question for that line is answered with "none", and
+ * Miles falls back to the aux device above. Every other query goes through. */
+typedef MMRESULT (WINAPI *mixerLineInfo_t)(HMIXEROBJ,LPMIXERLINEA,DWORD);
+MMRESULT WINAPI i82_mixerGetLineInfoA(HMIXEROBJ mix,LPMIXERLINEA line,DWORD flags){
+    if((flags&MIXER_GETLINEINFOF_QUERYMASK)==MIXER_GETLINEINFOF_COMPONENTTYPE && line
+       && line->dwComponentType==MIXERLINE_COMPONENTTYPE_SRC_COMPACTDISC){
+        WLOG("mixerGetLineInfoA: CD line hidden");
+        return MIXERR_INVALLINE;
+    }
+    mixerLineInfo_t fn=g_sys?(mixerLineInfo_t)(void*)GetProcAddress(g_sys,"mixerGetLineInfoA"):NULL;
+    return fn?fn(mix,line,flags):MMSYSERR_NODRIVER;
 }
 
 BOOL WINAPI DllMain(HINSTANCE h,DWORD reason,LPVOID r){

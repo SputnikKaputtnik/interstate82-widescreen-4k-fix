@@ -19,6 +19,11 @@
  * the first training level (a01.msa) showed the same in play. Their
  * clipping is capped at 2x; every other level takes the factor given.
  *
+ * With the longer view, cars switching to their coarse models in the distance
+ * become obvious, so the car models' distant detail levels are pointed at the
+ * detailed one as well (see share_lods()). The wheels and weapons switch in
+ * code; dinput.dll takes care of those.
+ *
  * Before the first change an untouched copy is kept as i82.zfs.original, and
  * every run computes from that copy, so factors never compound. Running it
  * again on a patched archive offers to restore the original.
@@ -237,6 +242,63 @@ static int scale(const unsigned char* src, unsigned char* out, size_t len,
     return changed_total;
 }
 
+/* The single occurrence of pat in [d,d+n): offset just past it, or -1 when it
+ * is missing or appears more than once. */
+static long find_once(const unsigned char* d, size_t n, const unsigned char* pat, size_t pl)
+{
+    long at = -1;
+    for (size_t i = 0; i + pl <= n; i++)
+        if (!memcmp(d + i, pat, pl)) {
+            if (at >= 0) return -1;
+            at = (long)(i + pl);
+        }
+    return at;
+}
+
+/* Each car model (.sbx) holds three detail levels as sibling nodes
+ * H_LOD1..H_LOD3. A node record is the name, then three 16-bit indices --
+ * parent, next sibling, first child. Pointing the first child of H_LOD2 and
+ * H_LOD3 at H_LOD1's makes every level draw the detailed model. Same rules as
+ * the script's share_lods(); returns the number of models changed. */
+static int share_lods(unsigned char* d, size_t len)
+{
+    if (len < 0x1C || memcmp(d, "ZFS3", 4)) return 0;
+    size_t namelen = rd32(d + 8), per_block = rd32(d + 12), esize = namelen + 20;
+    size_t blk = rd32(d + 0x18);
+    int models = 0;
+    for (int guard = 0; blk && guard < 10000; guard++) {
+        if (namelen == 0 || namelen > 64 || blk + 4 + per_block * esize > len) break;
+        for (size_t i = 0; i < per_block; i++) {
+            const unsigned char* e = d + blk + 4 + i * esize;
+            char name[65];
+            memcpy(name, e, namelen);
+            name[namelen] = 0;
+            size_t nl = strlen(name);
+            if (nl < 4 || _stricmp(name + nl - 4, ".sbx")) continue;
+            size_t a = rd32(e + namelen), b = a + rd32(e + namelen + 8);
+            if (b > len || b < a) continue;
+            size_t rec[3];
+            int nrec = 0;
+            for (int level = 1; level <= 3; level++) {
+                unsigned char pat[8] = { 0, 'H', '_', 'L', 'O', 'D', (unsigned char)('0' + level), 0 };
+                long at = find_once(d + a, b - a, pat, sizeof pat);
+                if (at < 0 || a + (size_t)at + 6 > b) break;
+                rec[nrec++] = a + (size_t)at;
+            }
+            if (nrec < 2) continue;
+            int siblings = 1;
+            for (int r = 1; r < nrec; r++)
+                if (memcmp(d + rec[r], d + rec[0], 2)) siblings = 0;     /* same parent */
+            if (!siblings) continue;
+            for (int r = 1; r < nrec; r++)
+                memcpy(d + rec[r] + 4, d + rec[0] + 4, 2);              /* first child */
+            models++;
+        }
+        blk = rd32(d + blk);
+    }
+    return models;
+}
+
 static int ask_yes(const char* q)
 {
     printf("%s [y/N] ", q);
@@ -331,6 +393,8 @@ static int run(int argc, char** argv)
     int skipped = 0;
     int changed = scale(src, out, len, clip, fog, &skipped);
     printf("  %d values rewritten, %d skipped, size unchanged\n", changed, skipped);
+    printf("  %d models: distant detail levels now draw the detailed model\n",
+           share_lods(out, len));
     if (!changed) {
         printf("  Nothing matched -- is this the Interstate '82 archive?\n");
         return 4;
