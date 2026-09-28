@@ -650,6 +650,96 @@ static void widen_display_modes(void){
     widen_module("I82ShellDll.dll",1);
 }
 
+/* ---- vehicle detail: no distance cut-offs for wheels and weapons --------
+ * Each car's wheels and weapons are separate models, and i82sim simplifies
+ * them by distance to the camera: the wheels turn into flat sprites beyond
+ * 20 m, and the weapons drop to their simple form beyond 50 m (at the
+ * highest "Cars" detail setting). With the longer draw distance both
+ * switches are plain to see. Each test compares a squared distance against
+ * limits read through absolute operands:
+ *
+ *   wheels   D8 1D <addr>          fcomp [400.0]               (20 m)^2
+ *            DF E0 F6 C4 41 75 04 C6 45 xx 01 8B xx 08 8B xx D8 02 00 00
+ *            89 45 xx 81 7D xx 00 00 B4 42     ...only at the normal 90 FOV
+ *
+ *   weapons  A1 xx xx xx xx 8B 88 8C 01 00 00 89 4D xx     car detail slider
+ *            D9 05 <addr>          fld  [1600.0]
+ *            D8 4D xx              fmul slider
+ *            D8 05 <addr>          fadd [900.0]                (50 m)^2 at 1.0
+ *            D9 5D xx
+ *
+ * Pointing those operands at a limit of our own leaves the game's constants
+ * alone; with it in both weapon operands the limit stays out of reach at any
+ * slider setting. It follows the widescreen patch's rules: never while a
+ * module is loading, retried until it matches, and redone when i82sim comes
+ * back. */
+static float g_farSq=1.0e12f;           /* squared metres: never reached */
+
+typedef struct {
+    const char* tag;
+    const BYTE* sig;
+    const char* mask;                   /* 'x' must match, '?' any byte */
+    int nops;
+    int opoff[2];                       /* operand offsets from the match */
+    BYTE* done; BYTE* seen; int tries; DWORD* witness;
+} FarPatch;
+
+static const BYTE g_wheelSig[]={
+    0xD8,0x1D,0,0,0,0, 0xDF,0xE0, 0xF6,0xC4,0x41, 0x75,0x04,
+    0xC6,0x45,0,0x01, 0x8B,0,0x08, 0x8B,0,0xD8,0x02,0x00,0x00, 0x89,0x45,0,
+    0x81,0x7D,0,0x00,0x00,0xB4,0x42};
+static const BYTE g_weaponSig[]={
+    0xA1,0,0,0,0, 0x8B,0x88,0x8C,0x01,0x00,0x00, 0x89,0x4D,0,
+    0xD9,0x05,0,0,0,0, 0xD8,0x4D,0, 0xD8,0x05,0,0,0,0, 0xD9,0x5D,0};
+static FarPatch g_far[]={
+    {"wheels", g_wheelSig, "xx????xxxxxxxxx?xx?xx?xxxxxx?xx?xxxx",1,{2,0}},
+    {"weapons",g_weaponSig,"x????xxxxxxxx?xx????xx?xx????xx?",2,{16,25}},
+};
+#define N_FAR (sizeof g_far/sizeof g_far[0])
+
+static BYTE* find_sig(BYTE* base,const BYTE* sig,const char* mask){
+    if(!base) return NULL;
+    IMAGE_DOS_HEADER* dos=(IMAGE_DOS_HEADER*)base;
+    if(!readable(base,0x40) || dos->e_magic!=IMAGE_DOS_SIGNATURE) return NULL;
+    IMAGE_NT_HEADERS* nt=(IMAGE_NT_HEADERS*)(base+dos->e_lfanew);
+    if(!readable(nt,sizeof *nt) || nt->Signature!=IMAGE_NT_SIGNATURE) return NULL;
+    SIZE_T size=nt->OptionalHeader.SizeOfImage, n=strlen(mask);
+    for(SIZE_T i=0;i+n<size;i++){
+        SIZE_T k=0;
+        while(k<n && (mask[k]=='?' || base[i+k]==sig[k])) k++;
+        if(k==n) return base+i;
+    }
+    return NULL;
+}
+
+static void far_patch(FarPatch* f,HMODULE m){
+    DWORD mine=(DWORD)(DWORD_PTR)&g_farSq;
+    if(!m){ f->done=NULL; f->seen=NULL; f->tries=0; f->witness=NULL; return; }
+    if(f->done==(BYTE*)m){
+        if(!f->witness || !readable(f->witness,4) || *f->witness==mine) return;
+        f->done=NULL; f->seen=NULL; f->tries=0; f->witness=NULL;       /* reloaded */
+    }
+    if(g_inLoad>0) return;
+    if(f->seen!=(BYTE*)m){ f->seen=(BYTE*)m; f->tries=0; }
+    BYTE* at=find_sig((BYTE*)m,f->sig,f->mask);
+    if(at){
+        int ok=1;
+        for(int i=0;i<f->nops;i++) ok&=write_imm((DWORD*)(at+f->opoff[i]),mine);
+        if(ok) f->witness=(DWORD*)(at+f->opoff[0]);
+    }
+    f->tries++;
+    if(f->witness || f->tries>=WS_MAX_TRIES) f->done=(BYTE*)m;
+#ifdef I82_DIAG
+    if(f->witness || f->tries>=WS_MAX_TRIES || f->tries==1)
+        dlog(f->tag,"i82sim.dll",(DWORD)(DWORD_PTR)m,f->witness?1:0);
+#endif
+}
+static void keep_vehicle_detail(void){
+    HMODULE m=NULL;
+    if(!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,"i82sim.dll",&m)) m=NULL;
+    for(unsigned i=0;i<N_FAR;i++) far_patch(&g_far[i],m);
+}
+
 /* ---- CD music: route the CD calls to GOG's ogg-winmm ------------------
  * The GOG release plays its soundtrack through its own winmm.dll next to the
  * game ("ogg-winmm virtual CD"): it answers the cdaudio MCI commands and plays
@@ -663,12 +753,20 @@ static void widen_display_modes(void){
  * whose own imports bind to the system DLL, and later imports of winmm.dll
  * keep getting the system one. So when the loaded winmm is not the one in the
  * game folder, load the game folder's copy (or ogg-winmm.dll, if it has been
- * renamed to keep the game off it) and point those six imports of the two
+ * renamed to keep the game off it) and point those imports of the two
  * modules that play CD audio at it: mss32.dll (Miles' redbook functions, in
  * missions) and I82ShellDll.dll. Like the heap hooks this is idempotent, and
- * a module the game loads again gets patched again. */
+ * a module the game loads again gets patched again.
+ *
+ * mixerGetLineInfoA goes along: Miles takes the CD volume from a mixer's
+ * compact-disc line when one exists and falls back to the aux device only
+ * otherwise. Our winmm.dll hides that line, so Miles ends up at its aux
+ * device and the music slider works; left on the system DLL, the slider moved
+ * a mixer control that has nothing to do with the music. A music DLL that
+ * only forwards the function changes nothing. */
 static const char* const g_cdFuncs[]={"mciSendCommandA","mciSendStringA",
-    "auxGetDevCapsA","auxGetNumDevs","auxGetVolume","auxSetVolume"};
+    "auxGetDevCapsA","auxGetNumDevs","auxGetVolume","auxSetVolume",
+    "mixerGetLineInfoA"};
 #define CD_FUNCS (sizeof g_cdFuncs/sizeof g_cdFuncs[0])
 static HMODULE g_sysWinmm=NULL;
 static HMODULE g_oggWinmm=NULL;         /* loaded by us next to the system one */
@@ -1065,6 +1163,7 @@ static void install_heap_hooks(void){
     hook_messagebox("i82sim.dll");      /* both are no-ops while unloaded */
     hook_messagebox("I82ShellDll.dll");
     widen_display_modes();
+    keep_vehicle_detail();
     route_cd_audio("mss32.dll");
     route_cd_audio("I82ShellDll.dll");
     HMODULE s=NULL;

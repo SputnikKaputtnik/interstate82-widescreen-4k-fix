@@ -29,6 +29,15 @@ happened (0 of 80). Area 49 Surface (m12.msa), Action Mall (m14.msa) and
 the first training level (a01.msa) showed the same in play. Their
 clipping is capped at 2x; every other level takes the factor given.
 
+With the longer view, cars switching to their coarse models in the distance
+become obvious. Each car model (.sbx) holds three detail levels as sibling
+nodes H_LOD1..H_LOD3, and the engine picks one by distance. Every node record
+is the name followed by three 16-bit indices -- parent, next sibling, first
+child -- so pointing the first-child index of H_LOD2 and H_LOD3 at H_LOD1's
+children makes all three levels draw the detailed model. That is two 2-byte
+fields per model; nothing moves, and the coarse meshes simply go unused. (The
+wheels and weapons switch in code; dinput.dll takes care of those.)
+
 The values sit in fixed-width fields padded with trailing spaces, so each one
 is rewritten to the same byte length. Every offset in the archive directory
 stays valid and the file does not need repacking. A field that cannot hold its
@@ -93,6 +102,49 @@ def zfs_find(data, want):
     return None
 
 
+def zfs_entries(data):
+    """Yield (name, start, end) for every file in the ZFS3 archive."""
+    if data[:4] != b"ZFS3" or len(data) < 0x1C:
+        return
+    namelen, per_block = struct.unpack_from("<II", data, 8)
+    blk = struct.unpack_from("<I", data, 0x18)[0]
+    esize = namelen + 20
+    seen = set()
+    while blk and blk not in seen and blk + 4 + per_block * esize <= len(data):
+        seen.add(blk)
+        for i in range(per_block):
+            e = blk + 4 + i * esize
+            name = data[e:e + namelen].split(b"\0")[0].lower()
+            if name:
+                off, _, size = struct.unpack_from("<III", data, e + namelen)
+                if off + size <= len(data):
+                    yield name, off, off + size
+        blk = struct.unpack_from("<I", data, blk)[0]
+
+
+def share_lods(out):
+    """Point H_LOD2/H_LOD3 at H_LOD1's children in every model; returns the count."""
+    models = 0
+    for name, a, b in list(zfs_entries(bytes(out))):
+        if not name.endswith(b".sbx"):
+            continue
+        body = bytes(out[a:b])
+        recs = []
+        for level in (1, 2, 3):
+            hits = [m.end() for m in re.finditer(b"\0H_LOD%d\0" % level, body)]
+            if len(hits) != 1 or hits[0] + 6 > len(body):
+                break
+            r = a + hits[0]
+            recs.append((r,) + struct.unpack_from("<hhh", out, r))
+        # all levels must be siblings under the same parent
+        if len(recs) < 2 or any(rec[1] != recs[0][1] for rec in recs):
+            continue
+        for rec in recs[1:]:
+            struct.pack_into("<h", out, rec[0] + 4, recs[0][3])
+        models += 1
+    return models
+
+
 def scale(data, clip, fog, verbose):
     out = bytearray(data)
     capped = []
@@ -135,7 +187,7 @@ def scale(data, clip, fog, verbose):
                   % (key.decode(), skipped))
         total_changed += changed
         total_skipped += skipped
-    return bytes(out), total_changed, total_skipped
+    return out, total_changed, total_skipped
 
 
 def main():
@@ -181,6 +233,9 @@ def main():
               % (len(out) - len(data)))
         return 3
     print("  %d values rewritten, %d skipped, size unchanged" % (changed, skipped))
+    models = share_lods(out)
+    print("  %d models: distant detail levels now draw the detailed model" % models)
+    out = bytes(out)
     if not changed:
         print("  nothing matched -- is this the right archive?")
         return 4

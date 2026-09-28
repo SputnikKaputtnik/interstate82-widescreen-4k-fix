@@ -13,7 +13,8 @@ import struct
 SYSTEM = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "SysWOW64", "winmm.dll")
 OWN = {"mciSendCommandA": "i82_mciSendCommandA", "mciSendStringA": "i82_mciSendStringA",
        "auxGetNumDevs": "i82_auxGetNumDevs", "auxGetDevCapsA": "i82_auxGetDevCapsA",
-       "auxGetVolume": "i82_auxGetVolume", "auxSetVolume": "i82_auxSetVolume"}
+       "auxGetVolume": "i82_auxGetVolume", "auxSetVolume": "i82_auxSetVolume",
+       "mixerGetLineInfoA": "i82_mixerGetLineInfoA"}
 
 
 def exports(path):
