@@ -152,6 +152,7 @@ footer { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 20px;
   <li><strong>Mission-load crash fixed.</strong> On Windows 10 and 11 the GOG version can crash while a mission loads. The patch contains a narrowly targeted heap fix for it.</li>
   <li><strong>Key binding fixed.</strong> Modern Windows reports empty or localized DirectInput key names, so the controls screen cannot bind keys and the game complains that controls do not exist. The patch supplies the English key names the game expects.</li>
   <li><strong>Start-up hang and soundtrack fixed.</strong> On current Windows 11 the GOG version can hang before it opens a window, because of the <code>winmm.dll</code> GOG added to play the soundtrack. The patch brings its own <code>winmm.dll</code> in its place, which starts cleanly and plays the soundtrack next to the sound effects, which could not be heard while the music played.</li>
+  <li><strong>No pop-in on cars.</strong> The game turns distant wheels into flat sprites beyond 20 m and drops weapons beyond 50 m, which the longer draw distance makes obvious. The patch keeps both at full detail.</li>
   <li><strong>No developer popups.</strong> A diagnostic message box that appears at every mission start is answered automatically.</li>
   <li><strong>Borderless fullscreen</strong> through <a href="https://github.com/narzoul/DDrawCompat">DDrawCompat</a>. No DxWnd, no launcher: start the game as usual.</li>
 </ul>
@@ -175,6 +176,7 @@ footer { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 20px;
 
 <h2>Longer draw distance (optional)</h2>
 <p>The in-game setting is already at its maximum, but the real clipping and fog distances are stored per level in <code>i82.zfs</code>. Download <code>patch_viewdistance.exe</code> from the <a href="https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest">latest release</a>, put it next to <code>i82.zfs</code> and double-click it. It sets the clipping distance to 3x and the fog to 2x, which removes the fog wall without pop-in and costs no measurable performance.</p>
+<p>With the longer view you would also see the cars switch to coarser models in the distance. The tool therefore keeps every car at its full detail level at any range: each car model's two distant detail levels are pointed at the detailed one. Wheels and weapons, which the game simplifies by distance as well, are kept at full detail by the patch's <code>dinput.dll</code>.</p>
 <p>The tool keeps an untouched copy as <code>i82.zfs.original</code>; double-click again to restore it. Other factors work from a command prompt:</p>
 <pre><code>patch_viewdistance.exe --clip 4 --fog 2.5
 patch_viewdistance.exe --restore</code></pre>
