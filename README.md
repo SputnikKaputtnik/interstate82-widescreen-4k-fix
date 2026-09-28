@@ -10,6 +10,8 @@ It also fixes the crashes, the start-up hang and the input problems that stop th
 
 Tested on Windows 11 with an NVIDIA RTX 4070 Ti.
 
+Built with heavy use of AI (Claude by Anthropic); see [AI transparency](#ai-transparency) for who did what.
+
 Project page: https://sputnikkaputtnik.github.io/interstate82-widescreen-4k-fix/
 
 **Keywords:** Interstate 82 4K patch, Interstate '82 widescreen patch, Interstate 82 1080p, 2160p, 16:9 fix, Windows 11 crash fix, GOG, DDrawCompat, resolution patch, draw distance, view distance, fog.
@@ -162,6 +164,21 @@ It stops the game from losing its video memory when it goes to the background, s
 
 **"Display Error: Interstate 82 is unable to set your chosen screen resolution" after "Restart Mission", followed by "World Init failed" and a loop of error messages.**
 Fixed in v1.3.1; update `dinput.dll`. "Restart Mission" unloads the game's mission module and loads it again, usually at the same address, and earlier versions sometimes missed that and left the fresh copy at the game's original four resolutions. If you get stuck in the loop on an older version, the dialogs sit behind the fullscreen window: press Ctrl+Alt+Del and end `i82stubz.exe` in Task Manager, or sign out if Task Manager opens behind the game as well.
+
+## AI transparency
+
+This project was made with an AI coding assistant, [Claude](https://claude.com/claude-code) by Anthropic, and the assistant did most of the hands-on work:
+
+- reverse engineering the game modules: the resolution filter, the level-load heap crash, the key-name popups, the CD-audio path and the draw-distance values;
+- writing the C source, the build commands and `patch_viewdistance`;
+- the automated test runs, which start the game, click through the menus, measure level starts and take the screenshots;
+- this README, the project page, the release notes and most comments in issues.
+
+The maintainer sets the goals and plays the game on real hardware. That covers the checks no script can do, such as listening for music and sound effects or spotting a missing car. The maintainer also decides the trade-offs, for example 3x draw distance with four levels held at 2x, and approves every merge, release and post. Each release ships the exact binaries that were tested.
+
+Commits written with the assistant carry a `Co-Authored-By: Claude` line. Posts under the maintainer's account, here and on other sites, are usually drafted with it as well.
+
+For you this means: the source is complete and short enough to read, and the behaviour described here was tested on the maintainer's machine. No second human developer has reviewed it. Bug reports and reviews are welcome.
 
 ## Credits
 
