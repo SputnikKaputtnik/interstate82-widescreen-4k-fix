@@ -8,7 +8,7 @@ Interstate '82 was built for 4:3 and 5:4 monitors: it offers exactly four resolu
 
 It also fixes the crashes, the start-up hang and the input problems that stop the game on modern Windows, gets GOG's CD soundtrack playing next to the sound effects, and removes the need for DxWnd's visible launcher. It does **not** contain any game files, nor a copy of DDrawCompat.
 
-Tested on Windows 11 with an NVIDIA RTX 4070 Ti.
+Tested on Windows 11, mainly on a PC with an NVIDIA RTX 4070 Ti.
 
 Built with heavy use of AI (Claude by Anthropic); see [AI transparency](#ai-transparency) for who did what.
 
