@@ -74,6 +74,29 @@ a { color: var(--accent2); }
 .facts strong { display: block; color: var(--text); font-size: 18px; }
 figure { margin: 24px 0; }
 figure img { width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); display: block; }
+.compare .frame { position: relative; --pos: 50%; border-radius: 8px; overflow: hidden; touch-action: pan-y; }
+.compare .frame img { border-radius: 0; }
+.compare .before { position: absolute; inset: 0; clip-path: inset(0 calc(100% - var(--pos)) 0 0); }
+.compare .divider {
+  position: absolute; top: 0; bottom: 0; left: var(--pos); width: 2px; margin-left: -1px;
+  background: #fff; box-shadow: 0 0 6px rgba(0, 0, 0, .6); pointer-events: none;
+}
+.compare .divider::after {
+  content: "\2039\00a0\203a"; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: #fff;
+  display: flex; align-items: center; justify-content: center; font-size: 20px; line-height: 1;
+  box-shadow: 0 0 8px rgba(0, 0, 0, .5);
+}
+.compare .tag {
+  position: absolute; bottom: 10px; padding: 3px 8px; border-radius: 4px; font-size: 13px;
+  background: rgba(13, 11, 20, .75); color: var(--text); pointer-events: none;
+}
+.compare .tag.left { left: 10px; }
+.compare .tag.right { right: 10px; }
+.compare input[type=range] {
+  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: ew-resize;
+}
+.compare input[type=range]:focus-visible + .divider::after { outline: 2px solid var(--accent2); outline-offset: 2px; }
 figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; }
 .carousel { position: relative; margin: 24px 0; }
 .carousel .track {
@@ -178,6 +201,17 @@ footer { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 20px;
 <h2>Longer draw distance (optional)</h2>
 <p>The in-game setting is already at its maximum, but the real clipping and fog distances are stored per level in <code>i82.zfs</code>. Download <code>patch_viewdistance.exe</code> from the <a href="https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest">latest release</a>, put it next to <code>i82.zfs</code> and double-click it. It sets the clipping distance to 3x and the fog to 2x, which removes the fog wall without pop-in and costs no measurable performance.</p>
 <p>With the longer view you would also see the cars switch to coarser models in the distance. The tool therefore keeps every car at its full detail level at any range: each car model's two distant detail levels are pointed at the detailed one. Wheels and weapons, which the game simplifies by distance as well, are kept at full detail by the patch's <code>dinput.dll</code>.</p>
+<figure class="compare">
+  <div class="frame">
+    <img src="drawdistance-l2-3x.webp" width="2000" height="1125" loading="lazy" alt="Start of the second campaign level at 3840x2160 with the draw distance patch: behind the trees a lake, a red barn and a row of pines appear">
+    <img class="before" src="drawdistance-l2-1x.webp" width="2000" height="1125" loading="lazy" alt="The same view with the original draw distance: the fog hides everything behind the nearest trees">
+    <input type="range" min="0" max="100" value="50" step="1" aria-label="Compare original and 3x draw distance">
+    <span class="divider"></span>
+    <span class="tag left">Original</span>
+    <span class="tag right">3x draw distance</span>
+  </div>
+  <figcaption>Same moment of the second campaign level, before and after. Drag the slider to compare.</figcaption>
+</figure>
 <p>The tool keeps an untouched copy as <code>i82.zfs.original</code>; double-click again to restore it. Other factors work from a command prompt:</p>
 <pre><code>patch_viewdistance.exe --clip 4 --fog 2.5
 patch_viewdistance.exe --restore</code></pre>
@@ -210,6 +244,14 @@ patch_viewdistance.exe --restore</code></pre>
 </footer>
 
 </main>
+<script>
+document.querySelectorAll(".compare .frame").forEach(function (f) {
+  var r = f.querySelector("input[type=range]");
+  function set() { f.style.setProperty("--pos", r.value + "%"); }
+  r.addEventListener("input", set);
+  set();
+});
+</script>
 <script>
 (function () {
   var c = document.querySelector(".carousel");
