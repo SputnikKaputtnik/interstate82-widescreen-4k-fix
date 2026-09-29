@@ -21,12 +21,13 @@ On the hardware this was developed against the change cost nothing measurable
 by geometry here. The short view distance was a decision made for 1999
 hardware, not a constraint of the engine.
 
-Four levels are the exception. On the golf course (Country
+Five levels are the exception. On the golf course (Country
 Club, m02.msa), which is dense with palms, the player's own car was not drawn
 at about one level start in eight at 3x (7 of 60), apparently because the
 game then has more objects in view than it can draw; at 2x that never
 happened (0 of 80). Area 49 Surface (m12.msa), Action Mall (m14.msa) and
-the first training level (a01.msa) showed the same in play. Their
+the first training level (a01.msa) and the campaign mission into the
+sewers (t23.msa) showed the same in play. Their
 clipping is capped at 2x; every other level takes the factor given.
 
 With the longer view, cars switching to their coarse models in the distance
@@ -69,9 +70,9 @@ DEFAULT_GAMEDIR = r"C:\Program Files (x86)\GOG Galaxy\Games\Interstate 82"
 ARCHIVE = "i82.zfs"
 ORIGINAL = "i82.zfs.original"
 
-# Instant Action levels whose clipping is capped (see above)
+# Levels whose clipping is capped (see above)
 CAPPED = {b"m02.msa": "Country Club", b"m12.msa": "Area 49 Surface", b"m14.msa": "Action Mall",
-          b"a01.msa": "Training 1"}
+          b"a01.msa": "Training 1", b"t23.msa": "Campaign: into the sewers"}
 CAP_CLIP_MAX = 2.0
 
 # key -> value is written with two decimals
