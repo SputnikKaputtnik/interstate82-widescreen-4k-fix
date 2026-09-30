@@ -172,7 +172,7 @@ footer { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 20px;
     <a class="btn secondary" href="https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix">Source code on GitHub</a>
   </div>
   <ul class="facts">
-    <li><strong>1920x1080 &amp; 4K</strong>Real 16:9, Hor+, no stretching</li>
+    <li><strong>1920x1080 &amp; 4K</strong>Real 16:9, no stretching</li>
     <li><strong>Windows 10 / 11</strong>Crash and key-binding fixes</li>
     <li><strong>3x draw distance</strong>Optional, one double-click</li>
     <li><strong>MIT license</strong>No game files included</li>
@@ -181,7 +181,7 @@ footer { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 20px;
 
 <h2>What the patch does</h2>
 <ul>
-  <li><strong>Widescreen and 4K resolutions.</strong> The game accepts exactly four hardcoded modes: 640x480, 800x600, 1024x768 and 1280x1024. The patch widens that filter, so 1920x1080 and 3840x2160 appear under Options &rarr; Graphics. The view extends sideways (Hor+) instead of stretching, the HUD moves to the screen edges and scales with the resolution.</li>
+  <li><strong>Widescreen and 4K resolutions.</strong> The game accepts exactly four hardcoded modes: 640x480, 800x600, 1024x768 and 1280x1024. The patch widens that filter, so 1920x1080 and 3840x2160 appear under Options &rarr; Graphics. The picture is rendered natively instead of stretched, and the HUD moves to the screen edges and scales with the resolution. The game keeps its horizontal field of view, so 16:9 shows a little less at the top and bottom than 4:3, and the chase view sits a bit closer to the car.</li>
   <li><strong>Mission-load crash fixed.</strong> On Windows 10 and 11 the GOG version can crash while a mission loads. The patch contains a narrowly targeted heap fix for it.</li>
   <li><strong>Key binding fixed.</strong> Modern Windows reports empty or localized DirectInput key names, so the controls screen cannot bind keys and the game complains that controls do not exist. The patch supplies the English key names the game expects.</li>
   <li><strong>Start-up hang and soundtrack fixed.</strong> On current Windows 11 the GOG version can hang before it opens a window, because of the <code>winmm.dll</code> GOG added to play the soundtrack. The patch brings its own <code>winmm.dll</code> in its place, which starts cleanly and plays the soundtrack next to the sound effects, which could not be heard while the music played.</li>
