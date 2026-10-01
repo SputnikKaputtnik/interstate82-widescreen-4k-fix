@@ -740,6 +740,128 @@ static void keep_vehicle_detail(void){
     for(unsigned i=0;i<N_FAR;i++) far_patch(&g_far[i],m);
 }
 
+/* ---- widescreen field of view: optional Hor+ instead of cropping --------
+ * The camera's field of view (90 degrees) applies to the width of the
+ * viewport. On a 16:9 frame that keeps the sides of the 4:3 view and cuts
+ * the top and bottom off: the chase view sits closer and the back of the
+ * car touches the lower edge. The camera stores tan(fov/2) at +0x2b4 and
+ * projects with width / (2 * tan), in two places -- when the camera is set
+ * up and whenever its field of view changes:
+ *
+ *   setup   DE F9 8B 4D xx  D9 99 B4 02 00 00   fstp [ecx+0x2b4]
+ *   set fov DE F9 8B 45 xx  D9 98 B4 02 00 00   fstp [eax+0x2b4]
+ *
+ * Both stores are replaced by a call to a few instructions of our own that
+ * multiply the value by (width / height) * 3/4 first, never by less than 1,
+ * and then store it. A viewport wider than 4:3 then shows the same height
+ * as 4:3 plus more to the sides; 4:3 and 5:4 stay exactly as they were.
+ * The field of view itself (+0x2d8) keeps its value, so the game's checks
+ * for "normal 90-degree view" still hold. Width and height come from the
+ * viewport (+0x2d0, +0x2d4), which both paths set before this store. */
+static BYTE* g_fovThunks=NULL;          /* [0] via ecx, [64] via eax */
+static const float g_fovThreeQuarters=0.75f;
+
+static BYTE* fov_thunk(int viaEax){
+    if(!g_fovThunks){
+        BYTE* t=(BYTE*)VirtualAlloc(NULL,128,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE);
+        if(!t) return NULL;
+        for(int r=0;r<2;r++){
+            BYTE* p=t+64*r;                             /* 35 bytes each */
+            BYTE mod=r?0x80:0x81;                       /* [eax+disp32] / [ecx+disp32] */
+            *p++=0xD9; *p++=mod;      *(DWORD*)p=0x2D0; p+=4;   /* fld  [reg+2d0] width  */
+            *p++=0xD8; *p++=mod+0x30; *(DWORD*)p=0x2D4; p+=4;   /* fdiv [reg+2d4] height */
+            *p++=0xD8; *p++=0x0D; *(DWORD*)p=(DWORD)(DWORD_PTR)&g_fovThreeQuarters; p+=4;
+            *p++=0xD9; *p++=0xE8;                       /* fld1                     */
+            *p++=0xDB; *p++=0xF1;                       /* fcomi st0,st1            */
+            *p++=0xDA; *p++=0xC1;                       /* fcmovb st0,st1 -> max    */
+            *p++=0xDD; *p++=0xD9;                       /* fstp st1                 */
+            *p++=0xDE; *p++=0xC9;                       /* fmulp st1,st0            */
+            *p++=0xD9; *p++=mod+0x18; *(DWORD*)p=0x2B4; p+=4;   /* fstp [reg+2b4]   */
+            *p++=0xC3;                                  /* ret                      */
+        }
+        FlushInstructionCache(GetCurrentProcess(),t,128);
+        g_fovThunks=t;
+    }
+    return g_fovThunks+(viaEax?64:0);
+}
+
+static const BYTE g_fovSetupSig[]={0xDE,0xF9,0x8B,0x4D,0,0xD9,0x99,0xB4,0x02,0x00,0x00,
+    0xD9,0x45,0,0xD8,0x75,0,0x8B,0x55,0,0xD9,0x9A,0xB8,0x02,0x00,0x00};
+static const BYTE g_fovSetSig[]={0xDE,0xF9,0x8B,0x45,0,0xD9,0x98,0xB4,0x02,0x00,0x00,
+    0x8B,0x4D,0,0xD9,0x05,0,0,0,0,0xD8,0x89,0xB4,0x02,0x00,0x00};
+static struct {
+    const BYTE* sig; const char* mask; int viaEax;
+    BYTE* done; BYTE* seen; int tries; BYTE* site;
+} g_fov[]={
+    {g_fovSetupSig,"xxxx?xxxxxxxx?xx?xx?xxxxxx",0},
+    {g_fovSetSig,  "xxxx?xxxxxxxx?xx????xxxxxx",1},
+};
+
+static int site_redirected(BYTE* s,BYTE* thunk){
+    return readable(s,6) && s[0]==0xE8 && s[5]==0x90
+        && s+5+*(LONG*)(s+1)==thunk;
+}
+/* Off unless asked for: the wider view puts about a third more of the world
+ * in sight, and the levels that lose the player's car at long draw
+ * distances are the ones with the most objects in view. Turned on with
+ *
+ *     i82patch.ini (game folder)    [Display]
+ *                                   HorPlus=1
+ *
+ * read once, at the first patch pass. */
+static int hor_plus_enabled(void){
+    static int state=-1;
+    if(state<0){
+        char path[MAX_PATH];
+        DWORD n=GetModuleFileNameA(NULL,path,MAX_PATH);
+        while(n && path[n-1]!='\\') n--;
+        state=0;
+        if(n && n+sizeof "i82patch.ini"<=MAX_PATH){
+            lstrcpyA(path+n,"i82patch.ini");
+            state=GetPrivateProfileIntA("Display","HorPlus",0,path)!=0;
+        }
+#ifdef I82_DIAG
+        dlog("horplus",state?"on":"off",0,0);
+#endif
+    }
+    return state;
+}
+
+static void widen_fov(void){
+    if(!hor_plus_enabled()) return;
+    HMODULE m=NULL;
+    if(!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,"i82sim.dll",&m)) m=NULL;
+    for(unsigned i=0;i<sizeof g_fov/sizeof g_fov[0];i++){
+        typeof(g_fov[0])* f=&g_fov[i];
+        BYTE* thunk=fov_thunk(f->viaEax);
+        if(!m || !thunk){ f->done=NULL; f->seen=NULL; f->tries=0; f->site=NULL; continue; }
+        if(f->done==(BYTE*)m){
+            if(!f->site || site_redirected(f->site,thunk)) continue;
+            f->done=NULL; f->seen=NULL; f->tries=0; f->site=NULL;     /* reloaded */
+        }
+        if(g_inLoad>0) continue;
+        if(f->seen!=(BYTE*)m){ f->seen=(BYTE*)m; f->tries=0; }
+        BYTE* at=find_sig((BYTE*)m,f->sig,f->mask);
+        if(at){
+            BYTE* s=at+5;                                /* the fstp [reg+2b4] */
+            DWORD old;
+            if(VirtualProtect(s,6,PAGE_EXECUTE_READWRITE,&old)){
+                LONG rel=(LONG)(thunk-(s+5));
+                s[0]=0xE8; *(LONG*)(s+1)=rel; s[5]=0x90;
+                VirtualProtect(s,6,old,&old);
+                FlushInstructionCache(GetCurrentProcess(),s,6);
+                f->site=s;
+            }
+        }
+        f->tries++;
+        if(f->site || f->tries>=WS_MAX_TRIES) f->done=(BYTE*)m;
+#ifdef I82_DIAG
+        if(f->site || f->tries>=WS_MAX_TRIES || f->tries==1)
+            dlog(i?"fov-set":"fov-setup","i82sim.dll",(DWORD)(DWORD_PTR)m,f->site?1:0);
+#endif
+    }
+}
+
 /* ---- CD music: route the CD calls to GOG's ogg-winmm ------------------
  * The GOG release plays its soundtrack through its own winmm.dll next to the
  * game ("ogg-winmm virtual CD"): it answers the cdaudio MCI commands and plays
@@ -1157,13 +1279,17 @@ static void route_cd_audio(const char* mod){
 /* Applying the heap hooks is idempotent: IATHookByAddr only matches the
  * untouched API address, so a second pass over an already-patched table
  * changes nothing. That lets both the loader hook and the backstop poll call
- * this freely. */
-static void install_heap_hooks(void){
+ * this freely -- but never at the same time: both rewrite code in i82sim, and
+ * one thread restoring a page's protection while the other is still writing
+ * to it crashed the game on a level load. install_heap_hooks() serializes
+ * them below. */
+static void install_hooks_locked(void){
     hook_messagebox(NULL);              /* i82stubz.exe itself */
     hook_messagebox("i82sim.dll");      /* both are no-ops while unloaded */
     hook_messagebox("I82ShellDll.dll");
     widen_display_modes();
     keep_vehicle_detail();
+    widen_fov();
     route_cd_audio("mss32.dll");
     route_cd_audio("I82ShellDll.dll");
     HMODULE s=NULL;
@@ -1174,6 +1300,20 @@ static void install_heap_hooks(void){
     IATHookByAddr(s,(void*)g_realHeapReAlloc,(void*)Hooked_HeapReAlloc);
     IATHookByAddr(s,(void*)g_realHeapFree,   (void*)Hooked_HeapFree);
 }
+
+/* The loader hook waits for a pass that is already running (it may be the
+ * one that has to hook a freshly loaded i82sim in time), but not forever: a
+ * library loaded from inside another DllMain holds the loader lock, which the
+ * poll's pass may be waiting for. The poll simply skips a round when busy. */
+static CRITICAL_SECTION g_patchCs;
+static void install_heap_hooks_from(int loader){
+    int got=TryEnterCriticalSection(&g_patchCs);
+    for(int i=0;!got && loader && i<500;i++){ Sleep(1); got=TryEnterCriticalSection(&g_patchCs); }
+    if(!got) return;
+    install_hooks_locked();
+    LeaveCriticalSection(&g_patchCs);
+}
+static void install_heap_hooks(void){ install_heap_hooks_from(1); }
 
 typedef HMODULE (WINAPI *LLA_t)(LPCSTR);
 typedef HMODULE (WINAPI *LLW_t)(LPCWSTR);
@@ -1269,7 +1409,7 @@ static DWORD WINAPI InstallThread(LPVOID p){ (void)p;
      * poll reintroduced the mission-start crash. Catch the load itself. */
     hook_loader();
     for(;;){                       /* backstop only */
-        install_heap_hooks();
+        install_heap_hooks_from(0);
         Sleep(50);
     }
 }
@@ -1285,6 +1425,7 @@ BOOL WINAPI DllMain(HINSTANCE h,DWORD reason,LPVOID r){ (void)r;
             (LPCWSTR)(void*)&DllMain,&self);
         DisableThreadLibraryCalls(h);
         InitializeCriticalSection(&g_cs);
+        InitializeCriticalSection(&g_patchCs);
         CreateThread(NULL,0,InstallThread,NULL,0,NULL);
     }
     return TRUE;
