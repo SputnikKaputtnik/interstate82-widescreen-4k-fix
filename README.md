@@ -43,20 +43,15 @@ The shim no longer hardcodes any address inside `i82sim.dll`, but it has only be
 
 1. Back up the game directory.
 2. Download DDrawCompat upstream and copy its `ddraw.dll` next to `i82stubz.exe`.
-3. Download `dinput.dll`, `winmm.dll` and `DDrawCompat-i82stubz.ini` from the [latest release](https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest). `SHA256SUMS.txt` there lets you verify them. If you would rather not run prebuilt binaries, build the two DLLs yourself (see [Build](#build)); the profile is also in this repository.
-4. Place the files as follows:
-
-   - `dinput.dll` → game directory, next to `i82stubz.exe`
-   - `winmm.dll` → game directory, next to `i82stubz.exe`, replacing GOG's `winmm.dll`
-   - `DDrawCompat-i82stubz.ini` → game directory, next to `i82stubz.exe`
-
-   Select the resolution in the game under Options → Graphics. The profile lists 1920x1080 and 3840x2160 under `SupportedResolutions`. DDrawCompat's default already includes every mode your display reports (`native`), so on most systems the line changes nothing. It keeps both modes available on a display that does not report them, and DDrawCompat then scales them to the desktop.
+3. Download the ZIP from the [latest release](https://github.com/SputnikKaputtnik/interstate82-widescreen-4k-fix/releases/latest) and extract it into the game directory, next to `i82stubz.exe`; confirm replacing `winmm.dll`. It contains `dinput.dll`, `winmm.dll`, the DDrawCompat profile `DDrawCompat-i82stubz.ini`, the optional settings file `i82patch.ini` and the optional draw-distance tool `patch_viewdistance.exe`. `SHA256SUMS.txt` in the release lets you verify the ZIP and every file in it. If you would rather not run prebuilt binaries, build the DLLs and the tool yourself (see [Build](#build)); the two `.ini` files are also in this repository.
+4. Select the resolution in the game under Options → Graphics. The profile lists 1920x1080 and 3840x2160 under `SupportedResolutions`. DDrawCompat's default already includes every mode your display reports (`native`), so on most systems the line changes nothing. It keeps both modes available on a display that does not report them, and DDrawCompat then scales them to the desktop.
 
    The `.def` files are only needed to build the DLLs; they do not need to be copied to the game directory.
 
-5. Start `i82stubz.exe` normally. No DxWnd launcher is required.
+5. Optional: for Hor+ on 16:9 (see [Optional: Hor+ field of view](#optional-hor-field-of-view)), set `HorPlus=1` in `i82patch.ini`.
+6. Start `i82stubz.exe` normally. No DxWnd launcher is required.
 
-Upgrading from an earlier version: copy `dinput.dll`, `winmm.dll` and `DDrawCompat-i82stubz.ini` over the old files. An `ogg-winmm.dll` left over from v1.4 is no longer needed and can be deleted. If you have edited your profile, keep it and add the lines `GdiInterops = none` and `TextureFilter = af16x`. The `dinput_orig.dll` that versions before 1.3 needed can stay or be deleted. If it is there, the shim still uses it. Up to v1.3.2 the shim reported the keyboard without a name, so a `bindings.usr` saved from the Controls screen with those versions names its device `""`. On the first start v1.3.3 changes those entries to `"Keyboard"` and keeps the old file as `bindings.usr.before-v1.3.3`. Your key assignments stay as they were.
+Upgrading from an earlier version: extract the ZIP over the old files. An `ogg-winmm.dll` left over from v1.4 is no longer needed and can be deleted. If you have edited your profile, keep your copy instead of the one in the ZIP and make sure it has the lines `GdiInterops = none` and `TextureFilter = af16x`. If you use the draw-distance patch, run the new `patch_viewdistance.exe` once. The `dinput_orig.dll` that versions before 1.3 needed can stay or be deleted. If it is there, the shim still uses it. Up to v1.3.2 the shim reported the keyboard without a name, so a `bindings.usr` saved from the Controls screen with those versions names its device `""`. On the first start v1.3.3 changes those entries to `"Keyboard"` and keeps the old file as `bindings.usr.before-v1.3.3`. Your key assignments stay as they were.
 
 The included DDrawCompat profile deliberately uses `FullscreenMode = borderless`, not exclusive fullscreen. It was the stable, confirmed mode for this setup.
 
@@ -86,12 +81,20 @@ gcc -O2 -s -o patch_viewdistance.exe patch_viewdistance.c
 - Both game modules are packed, so their code is still encrypted for a short while after they appear in the loader's module list. The patch therefore never writes while a `LoadLibrary` call is in progress, and it keeps retrying until a scan actually matches instead of assuming the first attempt saw real code. A module counts as patched only while the patched bytes are still there, so a module the game unloads and loads again, as it does on "Restart Mission", is patched again.
 - It redirects three groups of imports: `HeapSize`, `HeapReAlloc` and `HeapFree` in `i82sim.dll`; the `LoadLibrary` family in `i82stubz.exe`, so the heap hooks are in place the moment the module is mapped rather than a poll interval later; and `MessageBoxA` in `i82sim.dll` and `I82ShellDll.dll`.
 - For the wheel and weapon detail it rewrites three absolute operands in `i82sim.dll`: the distance limits of those two tests are read from a value inside `dinput.dll` instead of the game's own constants, which stay untouched. Each site is found by its instruction pattern, and nothing is written unless the whole pattern matches.
+- For Hor+, which is off unless `i82patch.ini` turns it on, it replaces two six-byte stores in `i82sim.dll`'s camera code -- the ones that save tan(fov/2) when the camera is set up and when its field of view changes -- with calls to a few instructions of its own that scale the value for viewports wider than 4:3 before storing it. The field of view itself keeps its value.
+- The shim patches `i82sim.dll` from two threads, the one loading the game's modules and a backstop poll; a lock keeps the two from ever patching at the same time.
 - The DirectInput hooks change only names: the device names of the system keyboard and mouse, and the names of their keys and buttons. Input itself is untouched.
 - Only popups whose caption begins with `CInput` are suppressed. Everything else is passed through untouched.
 - `winmm.dll` implements `mciSendCommandA`, `mciSendStringA` and the four `aux` volume functions for the CD audio, following GOG's ogg-winmm, plus `mixerGetLineInfoA`, which reports no compact-disc line and answers every other query from Windows. It passes the other 186 functions on to Windows' `winmm.dll`, which it loads by full path. It reads only `MUSIC\TrackNN.ogg` and loads `libvorbisfile-3.dll` from the game directory, and it writes nothing.
 - Where the game has been given Windows' `winmm.dll`, `dinput.dll` loads the `winmm.dll` from the game directory and points the imports of those six functions and `mixerGetLineInfoA` in `mss32.dll` and `I82ShellDll.dll` at it. If that is still GOG's music DLL, it also serves its six `waveOut` imports from a DirectSound stream.
 - The shim writes two files. `dinput_msgbox.log` is written only when such a popup is suppressed. `bindings.usr` is rewritten once, and only if it still has device names left empty by v1.3.2 or earlier; the old file is kept as `bindings.usr.before-v1.3.3`. There is no telemetry, no registry access and no background diagnostics.
 - To revert this method, remove `dinput.dll`, `ddraw.dll`, `DDrawCompat-i82stubz.ini` and, if an older version left one, `dinput_orig.dll`, and put GOG's `winmm.dll` back from your backup or with "Verify / Repair" in GOG Galaxy. Restore any other files from your backup if they existed before installation.
+
+## Optional: Hor+ field of view
+
+The game's camera keeps a 90-degree horizontal field of view whatever the shape of the screen. On 16:9 that means less picture at the top and bottom than on 4:3: the chase view sits closer, and the back of the car touches the lower edge. With `HorPlus=1` in `i82patch.ini`, the shim widens the horizontal view instead, so 16:9 shows the same height as 4:3 plus more to the sides. 4:3 and 5:4 are not affected.
+
+It is off by default. The wider view puts about a third more of the world in sight, and the levels on which the player's car can be missing at the start are the ones with the most objects in view (see [Optional: longer draw distance](#optional-longer-draw-distance)). If that happens with Hor+, set it back to `0`.
 
 ## Optional: longer draw distance
 
