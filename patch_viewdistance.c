@@ -11,14 +11,15 @@
  * default. Values sit in fixed-width fields padded with spaces, so each one is
  * rewritten to the same byte length and no offset in the archive moves.
  *
- * Six levels are the exception. On the golf course (Country
+ * Seven levels are the exception. On the golf course (Country
  * Club, m02.msa), which is dense with palms, the player's own car was not
  * drawn at about one level start in eight at 3x (7 of 60), apparently because
  * the game then has more objects in view than it can draw; at 2x that never
  * happened (0 of 80). Area 49 Surface (m12.msa), Action Mall (m14.msa) and
  * the first training level (a01.msa) and the campaign missions into the
- * sewers (t23.msa) and to the hospital (t24.msa) showed the same in play. Their
- * clipping is capped at 2x; every other level takes the factor given.
+ * sewers (t23.msa), to the hospital (t24.msa) and through Area 49 (t16.msa)
+ * showed the same in play. Their clipping is capped at 2x; every other level
+ * takes the factor given.
  *
  * With the longer view, cars switching to their coarse models in the distance
  * become obvious, so the car models' distant detail levels are pointed at the
@@ -66,6 +67,7 @@ static const struct { const char* file; const char* title; } CAPPED[] = {
     { "a01.msa", "Training 1" },
     { "t23.msa", "Campaign: into the sewers" },
     { "t24.msa", "Campaign: to the hospital" },
+    { "t16.msa", "Campaign: Area 49" },
 };
 #define NCAPPED (int)(sizeof CAPPED / sizeof CAPPED[0])
 #define CAP_CLIP_MAX 2.0
