@@ -11,15 +11,11 @@
  * default. Values sit in fixed-width fields padded with spaces, so each one is
  * rewritten to the same byte length and no offset in the archive moves.
  *
- * Seven levels are the exception. On the golf course (Country
- * Club, m02.msa), which is dense with palms, the player's own car was not
- * drawn at about one level start in eight at 3x (7 of 60), apparently because
- * the game then has more objects in view than it can draw; at 2x that never
- * happened (0 of 80). Area 49 Surface (m12.msa), Action Mall (m14.msa) and
- * the first training level (a01.msa) and the campaign missions into the
- * sewers (t23.msa), to the hospital (t24.msa) and through Area 49 (t16.msa)
- * showed the same in play. Their clipping is capped at 2x; every other level
- * takes the factor given.
+ * Every level takes the same factors. With more in view, the busiest levels
+ * used to run out of the renderer's per-frame buffers, which lost the
+ * player's car at the start of a level and could crash Restart Mission;
+ * dinput.dll 1.8 and later enlarges those buffers, so use this tool together
+ * with it.
  *
  * With the longer view, cars switching to their coarse models in the distance
  * become obvious, so the car models' distant detail levels are pointed at the
@@ -59,47 +55,9 @@ static const struct { const char* key; int is_float; int is_clip; } KEYS[] = {
 };
 #define NKEYS (int)(sizeof KEYS / sizeof KEYS[0])
 
-/* Levels whose clipping is capped (see above) */
-static const struct { const char* file; const char* title; } CAPPED[] = {
-    { "m02.msa", "Country Club" },
-    { "m12.msa", "Area 49 Surface" },
-    { "m14.msa", "Action Mall" },
-    { "a01.msa", "Training 1" },
-    { "t23.msa", "Campaign: into the sewers" },
-    { "t24.msa", "Campaign: to the hospital" },
-    { "t16.msa", "Campaign: Area 49" },
-};
-#define NCAPPED (int)(sizeof CAPPED / sizeof CAPPED[0])
-#define CAP_CLIP_MAX 2.0
-
 static unsigned rd32(const unsigned char* p)
 {
     return p[0] | p[1] << 8 | p[2] << 16 | (unsigned)p[3] << 24;
-}
-
-/* Where a file lies inside the ZFS3 archive: 1 and [*start,*end) if found. */
-static int zfs_find(const unsigned char* d, size_t len, const char* want,
-                    size_t* start, size_t* end)
-{
-    if (len < 0x1C || memcmp(d, "ZFS3", 4)) return 0;
-    size_t namelen = rd32(d + 8), per_block = rd32(d + 12), esize = namelen + 20;
-    size_t blk = rd32(d + 0x18);
-    for (int guard = 0; blk && guard < 10000; guard++) {
-        if (namelen == 0 || namelen > 64 || blk + 4 + per_block * esize > len) return 0;
-        for (size_t i = 0; i < per_block; i++) {
-            const unsigned char* e = d + blk + 4 + i * esize;
-            char name[65];
-            memcpy(name, e, namelen);
-            name[namelen] = 0;
-            if (!_stricmp(name, want)) {
-                *start = rd32(e + namelen);
-                *end = *start + rd32(e + namelen + 8);
-                return 1;
-            }
-        }
-        blk = rd32(d + blk);
-    }
-    return 0;
 }
 
 static int g_interactive;   /* started from Explorer: keep the window open */
@@ -168,13 +126,6 @@ static int scale(const unsigned char* src, unsigned char* out, size_t len,
 {
     int changed_total = 0;
     *skipped_total = 0;
-    size_t cap0[NCAPPED], cap1[NCAPPED];
-    int have[NCAPPED];
-    for (int c = 0; c < NCAPPED; c++) {
-        have[c] = zfs_find(src, len, CAPPED[c].file, &cap0[c], &cap1[c]);
-        if (have[c] && clip > CAP_CLIP_MAX)
-            printf("    %s (%s): clipping capped at x%g\n", CAPPED[c].file, CAPPED[c].title, CAP_CLIP_MAX);
-    }
     for (int k = 0; k < NKEYS; k++) {
         const char* key = KEYS[k].key;
         size_t kl = strlen(key);
@@ -209,11 +160,7 @@ static int scale(const unsigned char* src, unsigned char* out, size_t len,
             if (v1 - v0 >= sizeof val) { skipped++; continue; }
             memcpy(val, src + v0, v1 - v0);
             val[v1 - v0] = 0;
-            double f = factor;
-            if (KEYS[k].is_clip && f > CAP_CLIP_MAX)
-                for (int c = 0; c < NCAPPED; c++)
-                    if (have[c] && i >= cap0[c] && i < cap1[c]) f = CAP_CLIP_MAX;
-            double nv = strtod(val, NULL) * f;
+            double nv = strtod(val, NULL) * factor;
             if (KEYS[k].is_float)
                 snprintf(txt, sizeof txt, "%.2f", nv);
             else
