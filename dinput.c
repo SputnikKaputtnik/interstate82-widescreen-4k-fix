@@ -740,7 +740,94 @@ static void keep_vehicle_detail(void){
     for(unsigned i=0;i<N_FAR;i++) far_patch(&g_far[i],m);
 }
 
-/* ---- widescreen field of view: optional Hor+ instead of cropping --------
+/* ---- render batch capacity ----------------------------------------------
+ * Every frame the renderer sorts what is in view into batches. Each batch
+ * takes a 0x24-byte entry from an array of 0x600 and 24 vertices (0x3C0
+ * bytes) from a vertex buffer of 0xA000 vertices. Neither limit is checked
+ * where it matters:
+ *
+ *   - the entry counter is never compared with 0x600, so batch 1537 and
+ *     later are written past the end of the array, into whatever the heap
+ *     keeps there. In Vegas, the busiest city, crash dumps showed up to 107
+ *     entries (3.8 KB) past the end, and the next free of a block in that
+ *     heap crashed on Restart Mission;
+ *   - when the vertex buffer is full (batch 1707) the function adding an
+ *     object returns, so everything still to come in that frame is not
+ *     drawn. The player's car comes late: at the start of a busy level its
+ *     body was missing while its lights, sprites drawn elsewhere, showed.
+ *
+ * A longer draw distance and Hor+ put more in view and reach both limits
+ * sooner. Both sizes are immediates in i82sim, used once when a level's
+ * renderer is built:
+ *
+ *   vertex buffer  83 BD A8 FE FF FF 00 74 1E 68 <00 A0 00 00> 6A 00 8B 55 B4
+ *   entry array    68 <04 D8 00 00> E8 ...                 0x600*0x24 + 4
+ *                  8B 55 B8 C7 02 <00 06 00 00> 68 <00 06 00 00> 6A 24
+ *                  (count kept in front of the array, and the count the
+ *                  array is constructed with -- the destructor reads the
+ *                  first, so the three stay consistent)
+ *
+ * Four times the vertices allow 6826 batches, the entry array holds 8192, so
+ * the buffer always runs out first and its check, which is there, applies.
+ * The vertices are drawn through a pointer per batch, not through 16-bit
+ * indices, so the buffer may pass 65536 vertices. Same rules as above: only
+ * outside a module load, retried until matched, redone after a reload. */
+#define RB_VERTS   0x28000u                       /* 4 x 0xA000 */
+#define RB_ENTRIES 0x2000u                        /* > 0x28000*0x28/0x3C0 */
+
+typedef struct {
+    const char* tag;
+    const BYTE* sig;
+    const char* mask;
+    int nops;
+    int opoff[3];
+    DWORD val[3];
+    BYTE* done; BYTE* seen; int tries; DWORD* witness;
+} ImmPatch;
+
+static const BYTE g_rbVertSig[]={
+    0x83,0xBD,0xA8,0xFE,0xFF,0xFF,0x00, 0x74,0x1E, 0x68,0x00,0xA0,0x00,0x00,
+    0x6A,0x00, 0x8B,0x55,0xB4};
+static const BYTE g_rbEntrySig[]={
+    0x68,0x04,0xD8,0x00,0x00, 0xE8,0,0,0,0, 0x83,0xC4,0x04, 0x89,0x45,0xB8,
+    0xC6,0x45,0xFC,0x06, 0x83,0x7D,0xB8,0x00, 0x74,0x31, 0x68,0,0,0,0,
+    0x68,0,0,0,0, 0x8B,0x55,0xB8, 0xC7,0x02,0x00,0x06,0x00,0x00,
+    0x68,0x00,0x06,0x00,0x00, 0x6A,0x24};
+static ImmPatch g_rb[]={
+    {"batch-verts",  g_rbVertSig, "xxxxxxxxxxxxxxxxxxx",1,{10,0,0},{RB_VERTS,0,0}},
+    {"batch-entries",g_rbEntrySig,"xxxxxx????xxxxxxxxxxxxxxxxx????x????xxxxxxxxxxxxxxxx",3,
+        {1,41,46},{RB_ENTRIES*0x24u+4u,RB_ENTRIES,RB_ENTRIES}},
+};
+#define N_RB (sizeof g_rb/sizeof g_rb[0])
+
+static void imm_patch(ImmPatch* f,HMODULE m){
+    if(!m){ f->done=NULL; f->seen=NULL; f->tries=0; f->witness=NULL; return; }
+    if(f->done==(BYTE*)m){
+        if(!f->witness || !readable(f->witness,4) || *f->witness==f->val[0]) return;
+        f->done=NULL; f->seen=NULL; f->tries=0; f->witness=NULL;       /* reloaded */
+    }
+    if(g_inLoad>0) return;
+    if(f->seen!=(BYTE*)m){ f->seen=(BYTE*)m; f->tries=0; }
+    BYTE* at=find_sig((BYTE*)m,f->sig,f->mask);
+    if(at){
+        int ok=1;
+        for(int i=0;i<f->nops;i++) ok&=write_imm((DWORD*)(at+f->opoff[i]),f->val[i]);
+        if(ok) f->witness=(DWORD*)(at+f->opoff[0]);
+    }
+    f->tries++;
+    if(f->witness || f->tries>=WS_MAX_TRIES) f->done=(BYTE*)m;
+#ifdef I82_DIAG
+    if(f->witness || f->tries>=WS_MAX_TRIES || f->tries==1)
+        dlog(f->tag,"i82sim.dll",(DWORD)(DWORD_PTR)m,f->witness?1:0);
+#endif
+}
+static void widen_render_batches(void){
+    HMODULE m=NULL;
+    if(!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,"i82sim.dll",&m)) m=NULL;
+    for(unsigned i=0;i<N_RB;i++) imm_patch(&g_rb[i],m);
+}
+
+/* ---- widescreen field of view: Hor+ instead of cropping -----------------
  * The camera's field of view (90 degrees) applies to the width of the
  * viewport. On a 16:9 frame that keeps the sides of the 4:3 view and cuts
  * the top and bottom off: the chase view sits closer and the back of the
@@ -801,34 +888,7 @@ static int site_redirected(BYTE* s,BYTE* thunk){
     return readable(s,6) && s[0]==0xE8 && s[5]==0x90
         && s+5+*(LONG*)(s+1)==thunk;
 }
-/* Off unless asked for: the wider view puts about a third more of the world
- * in sight, and the levels that lose the player's car at long draw
- * distances are the ones with the most objects in view. Turned on with
- *
- *     i82patch.ini (game folder)    [Display]
- *                                   HorPlus=1
- *
- * read once, at the first patch pass. */
-static int hor_plus_enabled(void){
-    static int state=-1;
-    if(state<0){
-        char path[MAX_PATH];
-        DWORD n=GetModuleFileNameA(NULL,path,MAX_PATH);
-        while(n && path[n-1]!='\\') n--;
-        state=0;
-        if(n && n+sizeof "i82patch.ini"<=MAX_PATH){
-            lstrcpyA(path+n,"i82patch.ini");
-            state=GetPrivateProfileIntA("Display","HorPlus",0,path)!=0;
-        }
-#ifdef I82_DIAG
-        dlog("horplus",state?"on":"off",0,0);
-#endif
-    }
-    return state;
-}
-
 static void widen_fov(void){
-    if(!hor_plus_enabled()) return;
     HMODULE m=NULL;
     if(!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,"i82sim.dll",&m)) m=NULL;
     for(unsigned i=0;i<sizeof g_fov/sizeof g_fov[0];i++){
@@ -1289,6 +1349,7 @@ static void install_hooks_locked(void){
     hook_messagebox("I82ShellDll.dll");
     widen_display_modes();
     keep_vehicle_detail();
+    widen_render_batches();
     widen_fov();
     route_cd_audio("mss32.dll");
     route_cd_audio("I82ShellDll.dll");
